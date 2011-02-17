@@ -32,7 +32,11 @@ struct s5p_panel_data {
 	const u16 *standby_on;
 	const u16 *standby_off;
 	const struct tl2796_gamma_adj_points *gamma_adj_points;
+	#ifdef CONFIG_FB_VOODOO
+	struct gamma_entry *gamma_table;
+	#else
 	const struct gamma_entry *gamma_table;
+	#endif
 	int gamma_table_size;
 };
 
