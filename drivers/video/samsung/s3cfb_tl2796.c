@@ -29,6 +29,10 @@
 #include <plat/gpio-cfg.h>
 #include <plat/regs-fb.h>
 #include <linux/earlysuspend.h>
+#ifdef CONFIG_FB_VOODOO
+#include <linux/miscdevice.h>
+#define VOODOO_COLOR_VERSION 1
+#endif
 
 #define SLEEPMSEC		0x1000
 #define ENDDEF			0x2000
@@ -55,6 +59,10 @@ struct s5p_lcd{
 	struct backlight_device *bl_dev;
 	struct early_suspend    early_suspend;
 };
+
+#ifdef CONFIG_FB_VOODOO
+struct s5p_lcd *lcd_;
+#endif
 
 static u32 gamma_lookup(struct s5p_lcd *lcd, u8 brightness, u32 val, int c)
 {
@@ -296,6 +304,100 @@ void tl2796_late_resume(struct early_suspend *h)
 
 	return ;
 }
+
+#ifdef CONFIG_FB_VOODOO
+/*
+ *
+ * Voodoo Color
+ *
+ */
+
+static ssize_t gamma_table_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int point;
+	int color;
+	for(point = 0; point < lcd_->data->gamma_table_size; point++)
+	{
+		for(color = 0; color < 3; color++)
+			if (color == 2)
+				sprintf(buf,"%s%u", buf, lcd_->data->gamma_table[point].v[color] );
+			else
+				sprintf(buf,"%s%u,", buf, lcd_->data->gamma_table[point].v[color] );
+
+		sprintf(buf,"%s\n", buf );
+	}
+
+	return sprintf(buf, "%s", buf);
+}
+
+static ssize_t gamma_table_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+	int point = 0;
+	u32 values[3];
+	int unsigned bytes_read = 0;
+	int color;
+
+	// skip comments or whatever on top of the file, max 1kB
+	int i;
+	for ( i = 0; ! sscanf(buf, "%u,%u,%u%n", &values[0], &values[1], &values[2], &bytes_read) && i <= 1024; i++)
+		buf += 1;
+
+	// read the standard gamma table format
+	while (sscanf(buf, "%u,%u,%u%n", &values[0], &values[1], &values[2], &bytes_read) && point < 16)
+	{
+		buf += bytes_read;
+		color = 0;
+		printk("Voodoo color: gamma table point %2d: ", point);
+		while(color < 3)
+		{
+			switch (color)
+			{
+				case 0: printk("red = %7d ", values[color]); break;
+				case 1: printk("green = %7d ", values[color]); break;
+				case 2: printk("blue = %7d\n", values[color]); break;
+			}
+
+			lcd_->data->gamma_table[point].v[color] = values[color];
+			color++;
+		}
+		point++;
+	}
+
+	if (point > 0)
+	{
+		update_brightness(lcd_);
+		printk("Voodoo color: updated gamma table (%d points)\n", point);
+	}
+	else
+		printk("Voodoo color: gamma table malformed: ignored\n");
+
+	return size;
+}
+
+static ssize_t voodoo_color_version(struct device *dev, struct device_attribute *attr, char *buf) {
+	return sprintf(buf, "%u\n", VOODOO_COLOR_VERSION);
+}
+
+static DEVICE_ATTR(gamma_table, S_IRUGO | S_IWUGO , gamma_table_show, gamma_table_store);
+static DEVICE_ATTR(version, S_IRUGO , voodoo_color_version, NULL);
+
+
+static struct attribute *voodoo_color_attributes[] = {
+	&dev_attr_gamma_table.attr,
+	&dev_attr_version.attr,
+	NULL
+};
+
+static struct attribute_group voodoo_color_group = {
+	.attrs = voodoo_color_attributes,
+};
+
+static struct miscdevice voodoo_color_device = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "voodoo_color",
+};
+#endif
+
 static int __devinit tl2796_probe(struct spi_device *spi)
 {
 	struct s5p_lcd *lcd;
@@ -356,6 +458,18 @@ static int __devinit tl2796_probe(struct spi_device *spi)
 	register_early_suspend(&lcd->early_suspend);
 #endif
 	pr_info("tl2796_probe successfully proved\n");
+
+#ifdef CONFIG_FB_VOODOO
+	misc_register(&voodoo_color_device);
+	if (sysfs_create_group(&voodoo_color_device.this_device->kobj, &voodoo_color_group) < 0)
+	{
+		printk("%s sysfs_create_group fail\n", __FUNCTION__);
+		pr_err("Failed to create sysfs group for device (%s)!\n", voodoo_color_device.name);
+	}
+
+	// make a copy of the codec pointer
+	lcd_ = lcd;
+#endif
 
 	return 0;
 
