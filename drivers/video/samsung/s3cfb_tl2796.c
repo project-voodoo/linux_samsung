@@ -204,15 +204,36 @@ static void s6e63m0_panel_send_sequence(struct s5p_lcd *lcd,
 {
 	int i = 0;
 
+#ifdef CONFIG_FB_VOODOO_DEBUG_LOG
+	int commands_record[512];
+	printk("Beginning sending commands to the Super AMOLED panel:\n");
+#endif
+
 	while ((wbuf[i] & DEFMASK) != ENDDEF) {
 		if ((wbuf[i] & DEFMASK) != SLEEPMSEC) {
 			s6e63m0_spi_write_driver(lcd, wbuf[i]);
+#ifdef CONFIG_FB_VOODOO_DEBUG_LOG
+			printk("%3d = %5d - 0x%X\n", i, wbuf[i], wbuf[i]);
+			commands_record[i] = wbuf[i];
+#endif
 			i += 1;
 		} else {
 			msleep(wbuf[i+1]);
 			i += 2;
 		}
 	}
+#ifdef CONFIG_FB_VOODOO_DEBUG_LOG
+	printk("Commands sent (%d)\n", i);
+	if (i == 25)
+	{
+		printk("Super AMOLED commands decoding:\n");
+		printk("Brightness gains: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[18]-256, commands_record[20]-256, commands_record[22]-256);
+		printk("Gamma point 1: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[5]-256, commands_record[6]-256, commands_record[7]-256);
+		printk("Gamma point 2: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[8]-256, commands_record[9]-256, commands_record[10]-256);
+		printk("Gamma point 3: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[11]-256, commands_record[12]-256, commands_record[13]-256);
+		printk("Gamma point 4: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[14]-256, commands_record[15]-256, commands_record[16]-256);
+	}
+#endif
 }
 
 static void update_brightness(struct s5p_lcd *lcd)
