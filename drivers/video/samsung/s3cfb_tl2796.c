@@ -403,16 +403,68 @@ static ssize_t gamma_table_store(struct device *dev, struct device_attribute *at
 	return size;
 }
 
+
+static ssize_t apply_custom_brightness_gammas_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+	int bytes_read = 0;
+	int user_values[3];
+	u16 gamma_regs[27];
+	int i = 0;
+	int j = 0;
+	int k = 0;
+
+	// copied from update_brightness() to generate easily a valid panel command sequence
+	gamma_regs[0] = 0x0FA;
+	gamma_regs[1] = 0x102;
+	gamma_regs[23] = 0x0FA;
+	gamma_regs[24] = 0x103;
+	gamma_regs[25] = ENDDEF;
+	gamma_regs[26] = 0x0000;
+
+	setup_gamma_regs(lcd_, gamma_regs + 2);
+
+	// replace calculated values by user values
+	printk("Voodoo color: send user brightness and gamma values to the Super AMOLED panel:\n");
+	// scan for gamma points 1, 2, 3 and 4 and then brightness and black
+	while (sscanf(buf, "%d,%d,%d%n", &user_values[0], &user_values[1], &user_values[2], &bytes_read) && i <= 5)
+	{
+		printk("Voodoo color: [%d] = %d,%d,%d\n", i, user_values[0], user_values[1], user_values[2]);
+		buf += bytes_read;
+
+		// brightness
+		if (i == 0)
+			for (j = 0; j < 3; j++)
+			{
+				gamma_regs[18+k] = user_values[j]+256;
+				// skip 2 registers
+				k = k+2;
+			}
+
+		// gamma 0 to gamma 4
+		if (i > 0 && i <= 5)
+			for (j = 0; j < 3; j++)
+				gamma_regs[2+((i-1)*3)+j] = user_values[j]+256;
+
+		i++;
+	}
+
+	s6e63m0_panel_send_sequence(lcd_, gamma_regs);
+
+	return size;
+}
+
 static ssize_t voodoo_color_version(struct device *dev, struct device_attribute *attr, char *buf) {
 	return sprintf(buf, "%u\n", VOODOO_COLOR_VERSION);
 }
 
 static DEVICE_ATTR(gamma_table, S_IRUGO | S_IWUGO , gamma_table_show, gamma_table_store);
+static DEVICE_ATTR(apply_custom_brightness_gammas, S_IWUGO , NULL, apply_custom_brightness_gammas_store);
 static DEVICE_ATTR(version, S_IRUGO , voodoo_color_version, NULL);
 
 
 static struct attribute *voodoo_color_attributes[] = {
 	&dev_attr_gamma_table.attr,
+	&dev_attr_apply_custom_brightness_gammas.attr,
 	&dev_attr_version.attr,
 	NULL
 };
