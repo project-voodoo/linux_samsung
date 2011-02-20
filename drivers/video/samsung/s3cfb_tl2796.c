@@ -227,11 +227,18 @@ static void s6e63m0_panel_send_sequence(struct s5p_lcd *lcd,
 	if (i == 25)
 	{
 		printk("Super AMOLED commands decoding:\n");
-		printk("Brightness gains: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[18]-256, commands_record[20]-256, commands_record[22]-256);
-		printk("Gamma point 1: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[5]-256, commands_record[6]-256, commands_record[7]-256);
-		printk("Gamma point 2: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[8]-256, commands_record[9]-256, commands_record[10]-256);
-		printk("Gamma point 3: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[11]-256, commands_record[12]-256, commands_record[13]-256);
-		printk("Gamma point 4: Red = %3d, Green = %3d, Blue = %3d\n", commands_record[14]-256, commands_record[15]-256, commands_record[16]-256);
+		printk("Brightness gains: Red = %3d, Green = %3d, Blue = %3d\n",
+			commands_record[18]-256, commands_record[20]-256, commands_record[22]-256);
+		printk("Gamma 0:          Red = %3d, Green = %3d, Blue = %3d\n",
+			commands_record[2]-256, commands_record[3]-256, commands_record[4]-256);
+		printk("Gamma 1:          Red = %3d, Green = %3d, Blue = %3d\n",
+			commands_record[5]-256, commands_record[6]-256, commands_record[7]-256);
+		printk("Gamma 2:          Red = %3d, Green = %3d, Blue = %3d\n",
+			commands_record[8]-256, commands_record[9]-256, commands_record[10]-256);
+		printk("Gamma 3:          Red = %3d, Green = %3d, Blue = %3d\n",
+			commands_record[11]-256, commands_record[12]-256, commands_record[13]-256);
+		printk("Gamma 4:          Red = %3d, Green = %3d, Blue = %3d\n",
+			commands_record[14]-256, commands_record[15]-256, commands_record[16]-256);
 	}
 #endif
 }
