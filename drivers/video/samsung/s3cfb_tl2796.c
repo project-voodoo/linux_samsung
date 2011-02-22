@@ -66,6 +66,18 @@ struct s5p_lcd *lcd_;
 
 static u32 gamma_lookup(struct s5p_lcd *lcd, u8 brightness, u32 val, int c)
 {
+	// c	color (red, green, blue)
+	// val	brightness value (BV_0, BV_1, BV_19, BV_43, BV_87, BV_171, BV_255)
+	// b	brightness value divided by brightness level
+
+	// bl	brightness range - low
+	// bh	brightness range - high
+
+	// vl	gamma table range - low
+	// vh	gamma table range - high
+
+	// ret	return value from the gamma table
+
 	int i;
 	u32 bl = 0;
 	u32 bh = 0;
