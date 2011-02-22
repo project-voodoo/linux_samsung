@@ -101,16 +101,26 @@ static u32 gamma_lookup(struct s5p_lcd *lcd, u8 brightness, u32 val, int c)
 		b = tmp + bv->v0;
 	}
 
+	// find which entry of the gamma table fits for val
+	// as a result, i becomes the index in the gamma table for val and color c
 	for (i = 0; i < pdata->gamma_table_size; i++) {
 		bl = bh;
 		bh = pdata->gamma_table[i].brightness;
 		if (bh >= b)
 			break;
 	}
+
+	// save corresponding value from the gamma table as vh
+	// high value of the range
 	vh = pdata->gamma_table[i].v[c];
+
+	// for special black point and gamma 0 (i==0 or i==1), return value
+	// is static. vl = vh = same as the value in gamma table for i
 	if (i == 0 || (b - bl) == 0) {
 		ret = vl = vh;
 	} else {
+		// simple proportional calculation of ret
+		// based on vl and vh from gamma table ranges
 		vl = pdata->gamma_table[i - 1].v[c];
 		tmp = (u64)vh * (b - bl) + (u64)vl * (bh - b);
 		do_div(tmp, bh - bl);
