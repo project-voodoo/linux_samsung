@@ -140,13 +140,17 @@ static void setup_gamma_regs(struct s5p_lcd *lcd, u16 gamma_regs[])
 	u8 brightness = lcd->bl;
 	const struct tl2796_gamma_adj_points *bv = lcd->gamma_adj_points;
 
+	// red, green then blue
 	for (c = 0; c < 3; c++) {
 		u32 adj;
+		// initialize v0 (black point) from the gamma table
+		// vx are gamma points 1 to 4.
 		u32 v0 = gamma_lookup(lcd, brightness, BV_0, c);
 		u32 vx[6];
 		u32 v1;
 		u32 v255;
 
+		// calculate gamma 0 value, based on v0 and v1
 		v1 = vx[0] = gamma_lookup(lcd, brightness, bv->v1, c);
 		adj = 600 - 5 - DIV_ROUND_CLOSEST(600 * v1, v0);
 		if (adj > 140) {
@@ -157,8 +161,10 @@ static void setup_gamma_regs(struct s5p_lcd *lcd, u16 gamma_regs[])
 			else
 				adj = 140;
 		}
+		// record gamma 0
 		gamma_regs[c] = adj | 0x100;
 
+		// calculate brightness value for color c
 		v255 = vx[5] = gamma_lookup(lcd, brightness, bv->v255, c);
 		adj = 600 - 120 - DIV_ROUND_CLOSEST(600 * v255, v0);
 		if (adj > 380) {
@@ -169,7 +175,9 @@ static void setup_gamma_regs(struct s5p_lcd *lcd, u16 gamma_regs[])
 			else
 				adj = 380;
 		}
+		// command to set brightness value for color c: always 0x100
 		gamma_regs[3 * 5 + 2 * c] = adj >> 8 | 0x100;
+		// record brightness value for color c = adj
 		gamma_regs[3 * 5 + 2 * c + 1] = (adj & 0xff) | 0x100;
 
 		vx[1] = gamma_lookup(lcd, brightness,  bv->v19, c);
@@ -177,10 +185,14 @@ static void setup_gamma_regs(struct s5p_lcd *lcd, u16 gamma_regs[])
 		vx[3] = gamma_lookup(lcd, brightness,  bv->v87, c);
 		vx[4] = gamma_lookup(lcd, brightness, bv->v171, c);
 
+		// calculate gamma points 4 to 1 successively
+		// those are calculated from vx[4] to vx[1], based on
+		// gamma table values chosen to follow current brightness
 		for (i = 4; i >= 1; i--) {
 			if (v1 <= vx[i + 1])
 				adj = -1;
 			else
+				// actual calculation
 				adj = DIV_ROUND_CLOSEST(320 * (v1 - vx[i]),
 							v1 - vx[i + 1]) - 65;
 			if (adj > 255) {
