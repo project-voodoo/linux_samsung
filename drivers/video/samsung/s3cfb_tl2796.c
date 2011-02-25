@@ -131,6 +131,12 @@ static u32 gamma_lookup(struct s5p_lcd *lcd, u8 brightness, u32 val, int c)
 		"found %08x:%08x, v %7d:%7d, ret %7d\n",
 		__func__, brightness, val, c, b, bl, bh, vl, vh, ret);
 
+#ifdef CONFIG_FB_VOODOO_DEBUG_LOG
+	printk("looking for %3d %08x c %d, %08x, "
+		"found %08x:%08x, v %7d:%7d, ret %7d, i %d\n",
+		brightness, val, c, b, bl, bh, vl, vh, ret, i);
+#endif
+
 	return ret;
 }
 
@@ -153,6 +159,13 @@ static void setup_gamma_regs(struct s5p_lcd *lcd, u16 gamma_regs[])
 		// calculate gamma 0 value, based on v0 and v1
 		v1 = vx[0] = gamma_lookup(lcd, brightness, bv->v1, c);
 		adj = 600 - 5 - DIV_ROUND_CLOSEST(600 * v1, v0);
+
+#ifdef CONFIG_FB_VOODOO_DEBUG_LOG
+		printk("Voodoo color: detailed gamma 0 calculation: 600 - 5 - ((600 * v1) / v0)\n");
+		printk("Voodoo color: detailed gamma 0 calculation: 600 - 5 - ((600 * %d) / %d) = %d\n",
+			v1, v0, adj);
+#endif
+
 		if (adj > 140) {
 			pr_debug("%s: bad adj value %d, v0 %d, v1 %d, c %d\n",
 				__func__, adj, v0, v1, c);
@@ -167,6 +180,13 @@ static void setup_gamma_regs(struct s5p_lcd *lcd, u16 gamma_regs[])
 		// calculate brightness value for color c
 		v255 = vx[5] = gamma_lookup(lcd, brightness, bv->v255, c);
 		adj = 600 - 120 - DIV_ROUND_CLOSEST(600 * v255, v0);
+
+#ifdef CONFIG_FB_VOODOO_DEBUG_LOG
+		printk("Voodoo color: detailed brightness calculation: 600 - 120 - (600 * v255 / v0)\n");
+		printk("Voodoo color: detailed brightness calculation: 600 - 120 - (600 * %d / %d) = %d\n",
+			v255, v0, adj);
+#endif
+
 		if (adj > 380) {
 			pr_debug("%s: bad adj value %d, v0 %d, v255 %d, c %d\n",
 				__func__, adj, v0, v255, c);
@@ -192,9 +212,18 @@ static void setup_gamma_regs(struct s5p_lcd *lcd, u16 gamma_regs[])
 			if (v1 <= vx[i + 1])
 				adj = -1;
 			else
+			{
 				// actual calculation
 				adj = DIV_ROUND_CLOSEST(320 * (v1 - vx[i]),
 							v1 - vx[i + 1]) - 65;
+
+#ifdef CONFIG_FB_VOODOO_DEBUG_LOG
+		printk("Voodoo color: detailed gamma %d calculation: ((320 * (v1 - vx[i])) / (v1 - vx[i + 1])) - 65\n", i);
+		printk("Voodoo color: detailed gamma %d calculation: ((320 * (%d - %d)) / (%d - %d)) - 65 = %d\n",
+			i, v1, vx[i], v1, vx[i+1], adj);
+#endif
+
+			}
 			if (adj > 255) {
 				pr_debug("%s: bad adj value %d, "
 					"vh %d, v %d, c %d\n",
