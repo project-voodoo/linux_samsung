@@ -270,9 +270,12 @@ static struct s3c2410_uartcfg herring_uartcfgs[] __initdata = {
 	},
 };
 
+#define S5PV210_LCD_WIDTH 480
+#define S5PV210_LCD_HEIGHT 800
+
 static struct s3cfb_lcd s6e63m0 = {
-	.width = 480,
-	.height = 800,
+	.width = S5PV210_LCD_WIDTH,
+	.height = S5PV210_LCD_HEIGHT,
 	.p_width = 52,
 	.p_height = 86,
 	.bpp = 24,
@@ -296,12 +299,39 @@ static struct s3cfb_lcd s6e63m0 = {
 	},
 };
 
+static struct s3cfb_lcd nt35580 = {
+	.width = 480,
+	.height = 800,
+	.p_width = 52,
+	.p_height = 86,
+	.bpp = 24,
+	.freq = 60,
+	.timing = {
+		.h_fp = 10,
+		.h_bp = 20,
+		.h_sw = 10,
+		.v_fp = 6,
+		.v_fpe = 1,
+		.v_bp = 8,
+		.v_bpe = 1,
+		.v_sw = 2,
+	},
+	.polarity = {
+		.rise_vclk = 1,
+		.inv_hsync = 1,
+		.inv_vsync = 1,
+		.inv_vden = 1,
+	},
+};
+
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0 (6144 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC1 (9900 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC2 (6144 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0 (36864 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1 (36864 * SZ_1K)
-#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMD (4800 * SZ_1K)
+#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMD (S5PV210_LCD_WIDTH * \
+					     S5PV210_LCD_HEIGHT * 4 * \
+					     CONFIG_FB_S3C_NR_BUFFERS)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_JPEG (8192 * SZ_1K)
 
 static struct s5p_media_device herring_media_devs[] = {
@@ -793,7 +823,7 @@ struct platform_device sec_device_dpram = {
 	.id	= -1,
 };
 
-static void tl2796_cfg_gpio(struct platform_device *pdev)
+static void panel_cfg_gpio(struct platform_device *pdev)
 {
 	int i;
 
@@ -935,7 +965,7 @@ void lcd_cfg_gpio_late_resume(void)
 }
 EXPORT_SYMBOL(lcd_cfg_gpio_late_resume);
 
-static int tl2796_reset_lcd(struct platform_device *pdev)
+static int panel_reset_lcd(struct platform_device *pdev)
 {
 	int err;
 
@@ -960,7 +990,7 @@ static int tl2796_reset_lcd(struct platform_device *pdev)
 	return 0;
 }
 
-static int tl2796_backlight_on(struct platform_device *pdev)
+static int panel_backlight_on(struct platform_device *pdev)
 {
 	return 0;
 }
@@ -973,9 +1003,22 @@ static struct s3c_platform_fb tl2796_data __initdata = {
 	.swap		= FB_SWAP_HWORD | FB_SWAP_WORD,
 
 	.lcd = &s6e63m0,
-	.cfg_gpio	= tl2796_cfg_gpio,
-	.backlight_on	= tl2796_backlight_on,
-	.reset_lcd	= tl2796_reset_lcd,
+	.cfg_gpio	= panel_cfg_gpio,
+	.backlight_on	= panel_backlight_on,
+	.reset_lcd	= panel_reset_lcd,
+};
+
+static struct s3c_platform_fb nt35580_data __initdata = {
+	.hw_ver		= 0x62,
+	.clk_name	= "sclk_fimd",
+	.nr_wins	= 5,
+	.default_win	= CONFIG_FB_S3C_DEFAULT_WINDOW,
+	.swap		= FB_SWAP_HWORD | FB_SWAP_WORD,
+
+	.lcd			= &nt35580,
+	.cfg_gpio	= panel_cfg_gpio,
+	.backlight_on	= panel_backlight_on,
+	.reset_lcd	= panel_reset_lcd,
 };
 
 #define LCD_BUS_NUM     3
@@ -995,6 +1038,19 @@ static struct spi_board_info spi_board_info[] __initdata = {
 		.controller_data = (void *)DISPLAY_CS,
 	},
 };
+
+static struct spi_board_info spi_board_info_tft[] __initdata = {
+	{
+		.modalias	= "nt35580",
+		.platform_data	= &herring_tft_panel_data,
+		.max_speed_hz	= 1200000,
+		.bus_num	= LCD_BUS_NUM,
+		.chip_select	= 0,
+		.mode		= SPI_MODE_3,
+		.controller_data = (void *)DISPLAY_CS,
+	},
+};
+
 
 static struct spi_gpio_platform_data tl2796_spi_gpio_data = {
 	.sck	= DISPLAY_CLK,
@@ -1179,7 +1235,7 @@ static void touch_keypad_onoff(int onoff)
 	if (onoff == TOUCHKEY_OFF)
 		msleep(30);
 	else
-		msleep(25);
+		msleep(50);
 }
 
 static const int touch_keypad_code[] = {
@@ -2002,6 +2058,62 @@ static struct i2c_board_info i2c_devs2[] __initdata = {
 		.irq = IRQ_EINT_GROUP(18, 5),
 	},
 };
+
+static void mxt224_init(void)
+{
+	if (system_rev < 0x10)
+		return;
+	mxt224_data.max_y = 939;
+	t9_config[24] = 0;
+	t9_config[27] = 0;
+	t9_config[28] = 0;
+	t9_config[29] = 0;
+	t9_config[30] = 0;
+}
+
+static ssize_t herring_virtual_keys_show(struct kobject *kobj,
+					struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf,
+		__stringify(EV_KEY) ":" __stringify(KEY_BACK) ":71:854:45:49"
+		":" __stringify(EV_KEY) ":"
+					__stringify(KEY_MENU) ":183:854:45:49"
+		":" __stringify(EV_KEY) ":"
+					__stringify(KEY_SEARCH) ":294:854:45:49"
+		":" __stringify(EV_KEY) ":"
+					__stringify(KEY_HOME) ":406:854:45:49"
+		"\n");
+}
+
+static struct kobj_attribute herring_virtual_keys_attr = {
+	.attr = {
+		.name = "virtualkeys.mxt224_ts_input",
+		.mode = S_IRUGO,
+	},
+	.show = &herring_virtual_keys_show,
+};
+
+static struct attribute *herring_properties_attrs[] = {
+	&herring_virtual_keys_attr.attr,
+	NULL,
+};
+
+static struct attribute_group herring_properties_attr_group = {
+	.attrs = herring_properties_attrs,
+};
+
+static void herring_virtual_keys_init(void)
+{
+	struct kobject *properties_kobj;
+	int ret;
+
+	properties_kobj = kobject_create_and_add("board_properties", NULL);
+	if (properties_kobj)
+		ret = sysfs_create_group(properties_kobj,
+						&herring_properties_attr_group);
+	if (!properties_kobj || ret)
+		pr_err("failed to create board_properties\n");
+}
 
 /* I2C2 */
 static struct i2c_board_info i2c_devs10[] __initdata = {
@@ -3219,9 +3331,9 @@ static struct gpio_init_data herring_init_gpios[] = {
 		.drv	= S3C_GPIO_DRVSTR_1X,
 	}, { /* GPIO_EAR_ADC_SEL */
 		.num	= S5PV210_GPJ3(3),
-		.cfg	= S3C_GPIO_OUTPUT,
-		.val	= S3C_GPIO_SETPIN_ONE,
-		.pud	= S3C_GPIO_PULL_NONE,
+		.cfg	= S3C_GPIO_INPUT,
+		.val	= S3C_GPIO_SETPIN_NONE,
+		.pud	= S3C_GPIO_PULL_DOWN,
 		.drv	= S3C_GPIO_DRVSTR_1X,
 	}, {
 		.num	= S5PV210_GPJ3(4),
@@ -3430,7 +3542,10 @@ void s3c_config_gpio_table(void)
 
 	for (i = 0; i < ARRAY_SIZE(herring_init_gpios); i++) {
 		gpio = herring_init_gpios[i].num;
-		if (gpio <= S5PV210_MP05(7)) {
+		if (system_rev <= 0x07 && gpio == S5PV210_GPJ3(3)) {
+			s3c_gpio_cfgpin(gpio, S3C_GPIO_OUTPUT);
+			gpio_set_value(gpio, S3C_GPIO_SETPIN_ONE);
+		} else if (gpio <= S5PV210_MP05(7)) {
 			s3c_gpio_cfgpin(gpio, herring_init_gpios[i].cfg);
 			s3c_gpio_setpull(gpio, herring_init_gpios[i].pud);
 
@@ -4031,7 +4146,6 @@ static struct platform_device *herring_devices[] __initdata = {
 	&s3c_device_i2c2,
 #endif
 	&s3c_device_i2c4,
-	&s3c_device_i2c5,  /* accel sensor */
 	&s3c_device_i2c6,
 	&s3c_device_i2c7,
 	&s3c_device_i2c8,  /* gyro sensor */
@@ -4259,6 +4373,8 @@ static void __init herring_machine_init(void)
 	setup_ram_console_mem();
 	s3c_usb_set_serial();
 	platform_add_devices(herring_devices, ARRAY_SIZE(herring_devices));
+	if (system_rev < 0x10)
+		platform_device_register(&s3c_device_i2c5);
 
 	/* Find out S5PC110 chip version */
 	_hw_version_check();
@@ -4309,6 +4425,7 @@ static void __init herring_machine_init(void)
 		/* magnetic and accel sensor */
 		i2c_register_board_info(1, i2c_devs1, ARRAY_SIZE(i2c_devs1));
 	}
+	mxt224_init();
 	i2c_register_board_info(2, i2c_devs2, ARRAY_SIZE(i2c_devs2));
 
 	/* wm8994 codec */
@@ -4318,9 +4435,13 @@ static void __init herring_machine_init(void)
 	if (system_rev == 0x04)
 		i2c_register_board_info(5, i2c_devs5, ARRAY_SIZE(i2c_devs5));
 	i2c_register_board_info(6, i2c_devs6, ARRAY_SIZE(i2c_devs6));
-	/* Touch Key */
-	touch_keypad_gpio_init();
-	i2c_register_board_info(10, i2c_devs10, ARRAY_SIZE(i2c_devs10));
+	if (system_rev < 0x10) {
+		/* Touch Key */
+		touch_keypad_gpio_init();
+		i2c_register_board_info(10, i2c_devs10, ARRAY_SIZE(i2c_devs10));
+	} else {
+		herring_virtual_keys_init();
+	}
 	/* FSA9480 */
 	fsa9480_gpio_init();
 	i2c_register_board_info(7, i2c_devs7, ARRAY_SIZE(i2c_devs7));
@@ -4340,10 +4461,13 @@ static void __init herring_machine_init(void)
        /* nfc sensor */
 	i2c_register_board_info(14, i2c_devs14, ARRAY_SIZE(i2c_devs14));
 
-#ifdef CONFIG_FB_S3C_TL2796
-	spi_register_board_info(spi_board_info, ARRAY_SIZE(spi_board_info));
-	s3cfb_set_platdata(&tl2796_data);
-#endif
+	if (system_rev < 0x10) {
+		spi_register_board_info(spi_board_info, ARRAY_SIZE(spi_board_info));
+		s3cfb_set_platdata(&tl2796_data);
+	} else {
+		spi_register_board_info(spi_board_info_tft, ARRAY_SIZE(spi_board_info_tft));
+		s3cfb_set_platdata(&nt35580_data);
+	}
 
 #if defined(CONFIG_S5P_ADC)
 	s3c_adc_set_platdata(&s3c_adc_platform);
