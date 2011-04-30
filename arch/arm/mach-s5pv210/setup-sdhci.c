@@ -28,6 +28,8 @@
 #include <mach/gpio.h>
 #include <asm/mach-types.h>
 
+#include "herring.h"
+
 /* clock sources for the mmc bus clock, order as for the ctrl2[5..4] */
 
 char *s5pv210_hsmmc_clksrcs[4] = {
@@ -114,6 +116,8 @@ void s5pv210_setup_sdhci2_cfg_gpio(struct platform_device *dev, int width)
 	case 0:
 	case 1:
 	case 4:
+		if (machine_is_herring() && herring_is_cdma_wimax_dev())
+			break;
 		/* Set all the necessary GPIO function and pull up/down */
 		for (gpio = S5PV210_GPG2(0); gpio <= S5PV210_GPG2(6); gpio++) {
 			if (gpio != S5PV210_GPG2(2)) {
@@ -194,10 +198,18 @@ void s5pv210_setup_sdhci_cfg_card(struct platform_device *dev,
 		if ((ios->clock > range_start) && (ios->clock < range_end))
 			ctrl3 = S3C_SDHCI_CTRL3_FCSELTX_BASIC |
 				S3C_SDHCI_CTRL3_FCSELRX_BASIC;
-		else
+		else if (machine_is_herring() && herring_is_cdma_wimax_dev() &&
+								dev->id == 2) {
+			ctrl3 = S3C_SDHCI_CTRL3_FCSELTX_BASIC;
+			if(card->type & MMC_TYPE_SDIO)
+				ctrl3 |= S3C_SDHCI_CTRL3_FCSELRX_BASIC;
+			else
+				ctrl3 |= S3C_SDHCI_CTRL3_FCSELRX_INVERT;
+		} else
 			ctrl3 = S3C_SDHCI_CTRL3_FCSELTX_BASIC |
 				S3C_SDHCI_CTRL3_FCSELRX_INVERT;
 	}
+
 
 	writel(ctrl2, r + S3C_SDHCI_CONTROL2);
 	writel(ctrl3, r + S3C_SDHCI_CONTROL3);
@@ -314,9 +326,17 @@ void s3c_sdhci_set_platdata(void)
 #endif
 #if defined(CONFIG_S3C_DEV_HSMMC2)
 	if (machine_is_herring()) {
-		hsmmc2_platdata.ext_cd = IRQ_EINT(28);
-		hsmmc2_platdata.cfg_ext_cd = universal_sdhci2_cfg_ext_cd;
-		hsmmc2_platdata.detect_ext_cd = universal_sdhci2_detect_ext_cd;
+		if (herring_is_cdma_wimax_dev()) {
+			hsmmc2_platdata.built_in = 1;
+			hsmmc2_platdata.must_maintain_clock = 1;
+			hsmmc2_platdata.enable_intr_on_resume = 1;
+		} else {
+			hsmmc2_platdata.ext_cd = IRQ_EINT(28);
+			hsmmc2_platdata.cfg_ext_cd =
+						universal_sdhci2_cfg_ext_cd;
+			hsmmc2_platdata.detect_ext_cd =
+						universal_sdhci2_detect_ext_cd;
+		}
 	}
 
 	s3c_sdhci2_set_platdata(&hsmmc2_platdata);
