@@ -31,7 +31,7 @@
 #define PVRVERSION_MIN 6
 #define PVRVERSION_BRANCH 16
 #define PVRVERSION_BUILD 4131
-#define PVRVERSION_STRING "1.6.16.4131"
+#define PVRVERSION_STRING "1.6.16.4131.1.1"
 #define PVRVERSION_FILE "eurasiacon.pj"
 
 #endif 
