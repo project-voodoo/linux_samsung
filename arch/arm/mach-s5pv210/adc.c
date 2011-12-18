@@ -202,8 +202,8 @@ s3c_adc_read(struct file *file, char __user *buffer,
 }
 
 
-static int s3c_adc_ioctl(struct inode *inode, struct file *file,
-	unsigned int cmd, unsigned long arg)
+static long s3c_adc_ioctl(struct file *file,
+			  unsigned int cmd, unsigned long arg)
 {
 
 	switch (cmd) {
@@ -225,7 +225,7 @@ static const struct file_operations s3c_adc_fops = {
 	.owner		= THIS_MODULE,
 	.read		= s3c_adc_read,
 	.open		= s3c_adc_open,
-	.ioctl		= s3c_adc_ioctl,
+	.unlocked_ioctl	= s3c_adc_ioctl,
 };
 
 static struct miscdevice s3c_adc_miscdev = {

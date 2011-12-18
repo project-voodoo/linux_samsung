@@ -53,7 +53,6 @@
 #define S3C2410_UERSTAT	  (0x14)
 #define S3C2410_UFSTAT	  (0x18)
 #define S3C2410_UMSTAT	  (0x1C)
-#define S3C2410_UBRDIV	  (0x28)
 #define S3C2410_UDIVSLOT  (0x2C)
 #define S3C2410_UINTMSK   (0x38)
 
@@ -202,7 +201,7 @@
 #define S5P_UINTSP		0x34
 #define S5P_UINTM		0x38
 
-/* Following are specific to S5PV210 and S5P6442 */
+/* Following are specific to S5PV210 */
 #define S5PV210_UCON_CLKMASK	(1<<10)
 #define S5PV210_UCON_PCLK	(0<<10)
 #define S5PV210_UCON_UCLK	(1<<10)
@@ -231,6 +230,8 @@
 #define S5PV210_UFSTAT_TXSHIFT	(16)
 #define S5PV210_UFSTAT_RXMASK	(255<<0)
 #define S5PV210_UFSTAT_RXSHIFT	(0)
+
+#define NO_NEED_CHECK_CLKSRC	1
 
 #ifndef __ASSEMBLY__
 
@@ -270,6 +271,8 @@ struct s3c2410_uartcfg {
 #else
         unsigned long	   uart_flags;      /* default uart flags */
 #endif
+
+	unsigned int	   has_fracval;
 
 	unsigned long	   ucon;	 /* value of ucon for port */
 	unsigned long	   ulcon;	 /* value of ulcon for port */

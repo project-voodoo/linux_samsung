@@ -17,10 +17,10 @@ struct mmc_queue {
 	char			*bounce_buf;
 	struct scatterlist	*bounce_sg;
 	unsigned int		bounce_sg_len;
-	unsigned int		rx_retries, tx_retries;
 };
 
-extern int mmc_init_queue(struct mmc_queue *, struct mmc_card *, spinlock_t *);
+extern int mmc_init_queue(struct mmc_queue *, struct mmc_card *, spinlock_t *,
+			  const char *);
 extern void mmc_cleanup_queue(struct mmc_queue *);
 extern void mmc_queue_suspend(struct mmc_queue *);
 extern void mmc_queue_resume(struct mmc_queue *);

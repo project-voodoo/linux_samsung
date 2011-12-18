@@ -39,6 +39,10 @@
 #endif
 #include "s3cfb.h"
 
+#if (CONFIG_FB_S3C_NUM_OVLY_WIN >= CONFIG_FB_S3C_DEFAULT_WINDOW)
+#error "FB_S3C_NUM_OVLY_WIN should be less than FB_S3C_DEFAULT_WINDOW"
+#endif
+
 struct s3c_platform_fb *to_fb_plat(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
@@ -158,9 +162,10 @@ static int s3cfb_map_video_memory(struct fb_info *fb)
 	if (fb->screen_base)
 		return 0;
 
-	if (pdata && pdata->pmem_start && (pdata->pmem_size >= fix->smem_len)) {
-		fix->smem_start = pdata->pmem_start;
-		fb->screen_base = ioremap_wc(fix->smem_start, pdata->pmem_size);
+	if (pdata && pdata->pmem_start[win->id] &&
+			(pdata->pmem_size[win->id] >= fix->smem_len)) {
+		fix->smem_start = pdata->pmem_start[win->id];
+		fb->screen_base = ioremap_wc(fix->smem_start, pdata->pmem_size[win->id]);
 	} else
 		fb->screen_base = dma_alloc_writecombine(fbdev->dev,
 						 PAGE_ALIGN(fix->smem_len),
@@ -191,8 +196,8 @@ static int s3cfb_map_default_video_memory(struct fb_info *fb)
 	if (win->owner == DMA_MEM_OTHER)
 		return 0;
 
-	fix->smem_start = pdata->pmem_start;
-	fb->screen_base = ioremap_wc(fix->smem_start, pdata->pmem_size);
+	fix->smem_start = pdata->pmem_start[win->id];
+	fb->screen_base = ioremap_wc(fix->smem_start, pdata->pmem_size[win->id]);
 
 	if (!fb->screen_base)
 		return -ENOMEM;
@@ -220,8 +225,8 @@ static int s3cfb_unmap_video_memory(struct fb_info *fb)
 
 	if (fix->smem_start) {
 		if (win->owner == DMA_MEM_FIMD) {
-			if (pdata && pdata->pmem_start &&
-					(pdata->pmem_size >= fix->smem_len))
+			if (pdata && pdata->pmem_start[win->id] &&
+					(pdata->pmem_size[win->id] >= fix->smem_len))
 				iounmap(fb->screen_base);
 			else
 				dma_free_writecombine(fbdev->dev, fix->smem_len,
@@ -229,6 +234,7 @@ static int s3cfb_unmap_video_memory(struct fb_info *fb)
 		}
 		fix->smem_start = 0;
 		fix->smem_len = 0;
+		fb->screen_base = 0;
 		dev_info(fbdev->dev,
 			"[fb%d] video memory released\n", win->id);
 	}
@@ -251,6 +257,7 @@ static int s3cfb_unmap_default_video_memory(struct fb_info *fb)
 #endif
 		fix->smem_start = 0;
 		fix->smem_len = 0;
+		fb->screen_base = 0;
 		dev_info(fbdev->dev,
 			"[fb%d] video memory released\n", win->id);
 	}
@@ -349,9 +356,6 @@ static int s3cfb_check_var(struct fb_var_screeninfo *var, struct fb_info *fb)
 	if (var->xres_virtual < var->xres)
 		var->xres_virtual = var->xres;
 
-	if (var->yres_virtual > var->yres * CONFIG_FB_S3C_NR_BUFFERS)
-		var->yres_virtual = var->yres * CONFIG_FB_S3C_NR_BUFFERS;
-
 	var->xoffset = 0;
 
 	if (var->yoffset + var->yres > var->yres_virtual)
@@ -445,6 +449,7 @@ static int s3cfb_blank(int blank_mode, struct fb_info *fb)
 
 	return 0;
 }
+
 static int s3cfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *fb)
 {
 	struct fb_fix_screeninfo *fix = &fb->fix;
@@ -760,10 +765,11 @@ static void s3cfb_init_fbinfo(struct s3cfb_global *ctrl, int id)
 	var->upper_margin = timing->v_fp;
 	var->lower_margin = timing->v_bp;
 
-	var->pixclock = lcd->freq * (var->left_margin + var->right_margin +
+	ctrl->pixclock_hz = lcd->freq * (var->left_margin + var->right_margin +
 				var->hsync_len + var->xres) *
 				(var->upper_margin + var->lower_margin +
 				var->vsync_len + var->yres);
+	var->pixclock = KHZ2PICOS(ctrl->pixclock_hz / 1000);
 
 	dev_dbg(ctrl->dev, "pixclock: %d\n", var->pixclock);
 

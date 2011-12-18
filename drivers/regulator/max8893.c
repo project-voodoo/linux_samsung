@@ -111,7 +111,8 @@ static int max8893_list(struct regulator_dev *rdev, unsigned selector)
 	return desc->min_uV + selector * MAX8893_STEP;
 }
 
-static int max8893_set(struct regulator_dev *rdev, int min_uV, int max_uV)
+static int max8893_set(struct regulator_dev *rdev, int min_uV, int max_uV,
+			unsigned *selectorp)
 {
 	struct max8893 *max8893 = rdev_get_drvdata(rdev);
 	struct max8893_desc *desc = rdev_get_max8893_desc(rdev);
@@ -142,6 +143,7 @@ static int max8893_set(struct regulator_dev *rdev, int min_uV, int max_uV)
 		dev_err(&rdev->dev, "%s: i2c write failed\n", __func__);
 		return ret;
 	}
+	*selectorp = selector;
 
 	return 0;
 }

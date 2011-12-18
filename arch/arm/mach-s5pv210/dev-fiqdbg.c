@@ -80,13 +80,14 @@ static void s5pv210_fiqdbg_uart_putc(struct platform_device *pdev,
 static void fiq_enable(struct platform_device *pdev,
 			unsigned int fiq, bool enabled)
 {
-	struct irq_chip *chip = get_irq_chip(fiq);
+	struct irq_chip *chip = irq_get_chip(fiq);
+	struct irq_data *d = irq_get_irq_data(fiq);
 
 	vic_set_fiq(fiq, enabled);
 	if (enabled)
-		chip->unmask(fiq);
+		chip->irq_unmask(d);
 	else
-		chip->mask(fiq);
+		chip->irq_mask(d);
 }
 
 static void fiq_ack(struct platform_device *pdev, unsigned int fiq)

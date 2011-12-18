@@ -1125,7 +1125,7 @@ static void wait_for_dc_servo(struct snd_soc_codec *codec, unsigned int op)
 /* S5P_SLEEP_CONFIG must be controlled by codec if codec use XUSBTI */
 int wm8994_configure_clock(struct snd_soc_codec *codec, int en)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	if (en) {
 		clk_enable(wm8994->codec_clk);
@@ -1169,7 +1169,7 @@ static int wm8994_earsel_control(struct wm8994_platform_data *pdata, int en)
 /* Audio Routing routines for the universal board..wm8994 codec*/
 void wm8994_disable_path(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	u16 val;
 	enum audio_path path = wm8994->cur_path;
@@ -1334,7 +1334,7 @@ void wm8994_disable_path(struct snd_soc_codec *codec)
 
 void wm8994_disable_rec_path(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	u16 val;
 	enum mic_path mic = wm8994->rec_path;
@@ -1518,7 +1518,7 @@ void wm8994_set_bluetooth_common_setting(struct snd_soc_codec *codec)
 
 void wm8994_record_headset_mic(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	u16 val;
 
@@ -1631,7 +1631,7 @@ void wm8994_record_headset_mic(struct snd_soc_codec *codec)
 
 void wm8994_record_main_mic(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	u16 val;
 
@@ -1901,7 +1901,7 @@ void wm8994_set_playback_receiver(struct snd_soc_codec *codec)
 
 void wm8994_set_playback_headset(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	u16 val;
 
@@ -2084,7 +2084,7 @@ void wm8994_set_playback_headset(struct snd_soc_codec *codec)
 
 void wm8994_set_playback_speaker(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	u16 val;
 
@@ -2196,7 +2196,7 @@ void wm8994_set_playback_speaker(struct snd_soc_codec *codec)
 
 void wm8994_set_playback_speaker_headset(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	u16 val;
 
@@ -2606,7 +2606,7 @@ void wm8994_set_voicecall_common_setting(struct snd_soc_codec *codec)
 
 static void wm8994_set_cdma_voicecall_receiver(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	int val;
 
@@ -2727,7 +2727,7 @@ static void wm8994_set_cdma_voicecall_receiver(struct snd_soc_codec *codec)
 
 static void wm8994_set_gsm_voicecall_receiver(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	int val;
 
@@ -2829,7 +2829,7 @@ void wm8994_set_voicecall_receiver(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_headset(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	int val;
 
@@ -2994,7 +2994,7 @@ void wm8994_set_voicecall_headset(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_headphone(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	int val;
 
@@ -3151,7 +3151,7 @@ void wm8994_set_voicecall_headphone(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_speaker(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	int val;
 
@@ -3316,7 +3316,7 @@ void wm8994_set_voicecall_bluetooth(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_tty_vco(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	int val;
 
@@ -3473,7 +3473,7 @@ void wm8994_set_voicecall_tty_vco(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_tty_hco(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	int val;
 
@@ -3643,7 +3643,7 @@ void wm8994_set_voicecall_tty_hco(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_tty_full(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
 	int val;
 
@@ -3803,7 +3803,7 @@ void wm8994_set_voicecall_tty_full(struct snd_soc_codec *codec)
 
 int wm8994_set_codec_gain(struct snd_soc_codec *codec, u16 mode, u16 device)
 {
-	struct wm8994_priv *wm8994 = codec->drvdata;
+	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 	int i;
 	u32 gain_set_bits = COMMON_SET_BIT;
 	u16 val;

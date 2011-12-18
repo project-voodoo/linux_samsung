@@ -40,7 +40,7 @@ struct clk_should_be_running {
 };
 
 static struct regulator_consumer_supply s5pv210_pd_audio_supply[] = {
-	REGULATOR_SUPPLY("pd", "s5pc1xx-iis.0"),
+	REGULATOR_SUPPLY("pd", "samsung-i2s.0"),
 };
 
 static struct regulator_consumer_supply s5pv210_pd_cam_supply[] = {
@@ -133,22 +133,22 @@ struct clk_should_be_running s5pv210_pd_audio_clk[] = {
 
 struct clk_should_be_running s5pv210_pd_cam_clk[] = {
 	{
-		.clk_name	= "sclk_fimc_lclk",
+		.clk_name	= "fimc",
 		.dev		= &s3c_device_fimc0.dev,
 	}, {
-		.clk_name	= "sclk_fimc_lclk",
+		.clk_name	= "fimc",
 		.dev		= &s3c_device_fimc1.dev,
 	}, {
-		.clk_name	= "sclk_fimc_lclk",
+		.clk_name	= "fimc",
 		.dev		= &s3c_device_fimc2.dev,
 	}, {
 		.clk_name	= "sclk_csis",
-		.dev		= &s3c_device_csis.dev,
+		.dev		= &s5p_device_mipi_csis0.dev,
 	}, {
 		.clk_name	= "jpeg",
 		.dev		= &s3c_device_jpeg.dev,
 	}, {
-		.clk_name	= "rotator",
+		.clk_name	= "rot",
 		.dev		= &s5p_device_rotator.dev,
 	}, {
 		/* end of the clock array */

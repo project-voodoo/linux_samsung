@@ -16,6 +16,7 @@
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
+#include <linux/err.h>
 
 #include <asm/hardware/pl330.h>
 
@@ -28,6 +29,7 @@
  * @node: To attach to the global list of DMACs.
  * @pi: PL330 configuration info for the DMAC.
  * @kmcache: Pool to quickly allocate xfers for all channels in the dmac.
+ * @clk: Pointer of DMAC operation clock.
  */
 struct s3c_pl330_dmac {
 	unsigned		busy_chan;
@@ -35,7 +37,7 @@ struct s3c_pl330_dmac {
 	struct list_head	node;
 	struct pl330_info	*pi;
 	struct kmem_cache	*kmcache;
-	struct clk		*dmaclk;
+	struct clk		*clk;
 };
 
 /**
@@ -66,7 +68,7 @@ struct s3c_pl330_xfer {
  * @req: Two requests to communicate with the PL330 engine.
  * @callback_fn: Callback function to the client.
  * @rqcfg: Channel configuration for the xfers.
- * @xfer_head: Pointer to the xfer to be next excecuted.
+ * @xfer_head: Pointer to the xfer to be next executed.
  * @dmac: Pointer to the DMAC that manages this channel, NULL if the
  * 	channel is available to be acquired.
  * @client: Client of this channel. NULL if the
@@ -745,11 +747,11 @@ int s3c2410_dma_request(enum dma_ch id,
 
 	dmac = ch->dmac;
 
-	clk_enable(dmac->dmaclk);
+	clk_enable(dmac->clk);
 
 	ch->pl330_chan_id = pl330_request_channel(dmac->pi);
 	if (!ch->pl330_chan_id) {
-		clk_disable(dmac->dmaclk);
+		clk_disable(dmac->clk);
 		chan_release(ch);
 		ret = -EBUSY;
 		goto req_exit;
@@ -861,7 +863,7 @@ int s3c2410_dma_free(enum dma_ch id, struct s3c2410_dma_client *client)
 	pl330_release_channel(ch->pl330_chan_id);
 
 	ch->pl330_chan_id = NULL;
-	clk_disable(ch->dmac->dmaclk);
+	clk_disable(ch->dmac->clk);
 	chan_release(ch);
 
 free_exit:
@@ -1047,7 +1049,6 @@ static int pl330_probe(struct platform_device *pdev)
 	struct s3c_pl330_platdata *pl330pd;
 	struct pl330_info *pl330_info;
 	struct resource *res;
-	struct clk *dmaclk;
 	int i, ret, irq;
 
 	pl330pd = pdev->dev.platform_data;
@@ -1071,15 +1072,6 @@ static int pl330_probe(struct platform_device *pdev)
 		goto probe_err1;
 	}
 
-	dmaclk = clk_get(&pdev->dev, "dma");
-	if (dmaclk == NULL) {
-		dev_err(&pdev->dev, "failed to find dma clock source\n");
-		ret = -ENODEV;
-		goto probe_err1;
-	}
-
-	clk_enable(dmaclk);
-
 	request_mem_region(res->start, resource_size(res), pdev->name);
 
 	pl330_info->base = ioremap(res->start, resource_size(res));
@@ -1099,19 +1091,25 @@ static int pl330_probe(struct platform_device *pdev)
 	if (ret)
 		goto probe_err4;
 
-	ret = pl330_add(pl330_info);
-	if (ret)
-		goto probe_err5;
-
 	/* Allocate a new DMAC */
 	s3c_pl330_dmac = kmalloc(sizeof(*s3c_pl330_dmac), GFP_KERNEL);
 	if (!s3c_pl330_dmac) {
 		ret = -ENOMEM;
-		goto probe_err6;
+		goto probe_err5;
 	}
 
-	/* Clock */
-	s3c_pl330_dmac->dmaclk = dmaclk;
+	/* Get operation clock and enable it */
+	s3c_pl330_dmac->clk = clk_get(&pdev->dev, "pdma");
+	if (IS_ERR(s3c_pl330_dmac->clk)) {
+		dev_err(&pdev->dev, "Cannot get operation clock.\n");
+		ret = -EINVAL;
+		goto probe_err6;
+	}
+	clk_enable(s3c_pl330_dmac->clk);
+
+	ret = pl330_add(pl330_info);
+	if (ret)
+		goto probe_err7;
 
 	/* Hook the info */
 	s3c_pl330_dmac->pi = pl330_info;
@@ -1124,7 +1122,7 @@ static int pl330_probe(struct platform_device *pdev)
 
 	if (!s3c_pl330_dmac->kmcache) {
 		ret = -ENOMEM;
-		goto probe_err7;
+		goto probe_err8;
 	}
 
 	/* Get the list of peripherals */
@@ -1148,13 +1146,16 @@ static int pl330_probe(struct platform_device *pdev)
 		pl330_info->pcfg.data_bus_width / 8, pl330_info->pcfg.num_chan,
 		pl330_info->pcfg.num_peri, pl330_info->pcfg.num_events);
 
-	clk_disable(dmaclk);
+	clk_disable(s3c_pl330_dmac->clk);
 	return 0;
 
-probe_err7:
-	kfree(s3c_pl330_dmac);
-probe_err6:
+probe_err8:
 	pl330_del(pl330_info);
+probe_err7:
+	clk_disable(s3c_pl330_dmac->clk);
+	clk_put(s3c_pl330_dmac->clk);
+probe_err6:
+	kfree(s3c_pl330_dmac);
 probe_err5:
 	free_irq(irq, pl330_info);
 probe_err4:
@@ -1162,8 +1163,6 @@ probe_err3:
 	iounmap(pl330_info->base);
 probe_err2:
 	release_mem_region(res->start, resource_size(res));
-	clk_disable(dmaclk);
-	clk_put(dmaclk);
 probe_err1:
 	kfree(pl330_info);
 
@@ -1221,9 +1220,11 @@ static int pl330_remove(struct platform_device *pdev)
 		}
 	}
 
+	/* Disable operation clock */
+	clk_put(dmac->clk);
+
 	/* Remove the DMAC */
 	list_del(&dmac->node);
-	clk_put(dmac->dmaclk);
 	kfree(dmac);
 
 	spin_unlock_irqrestore(&res_lock, flags);

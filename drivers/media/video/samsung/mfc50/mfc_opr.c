@@ -35,6 +35,8 @@
 #include <linux/mm.h>
 #include <linux/io.h>
 #include <linux/delay.h>
+#include <linux/sched.h>
+#include <linux/dma-mapping.h>
 #include <plat/regs-mfc.h>
 #include <asm/cacheflush.h>
 #include <mach/map.h>
@@ -71,6 +73,12 @@
 #define ENABLE_DEBUG_DEC_EXE_PARSER_ERR		1 /* Firstly, Set ENABLE_DEBUG_DEC_EXE_INTR_ERR is "1". */
 #endif
 #endif
+
+#define WRITEL_SHARED_MEM(data, address)	\
+	do {									\
+		writel(data, address);				\
+		dmac_flush_range((void *)address, (void *)(address + 4)); \
+	} while (0)
 
 #if DEBUG_MAKE_RAW
 #include <linux/kernel.h>
@@ -234,7 +242,11 @@ static void mfc_set_dec_stream_buffer(struct mfc_inst_ctx *mfc_ctx, int buf_addr
 	unsigned int port0_base_paddr;
 
 	mfc_debug_L0("inst_no : %d, buf_addr : 0x%08x, buf_size : 0x%08x\n", mfc_ctx->InstNo, buf_addr, buf_size);
-
+	if (mfc_ctx->buf_type == MFC_BUFFER_CACHE) {
+		unsigned char *in_vir;
+		in_vir = phys_to_virt(buf_addr);
+		dma_map_single(NULL, in_vir, buf_size, DMA_TO_DEVICE);
+	}
 	port0_base_paddr = mfc_port0_base_paddr;
 
 	/* release buffer */
@@ -244,7 +256,7 @@ static void mfc_set_dec_stream_buffer(struct mfc_inst_ctx *mfc_ctx, int buf_addr
 	WRITEL((buf_addr - port0_base_paddr) >> 11, MFC_SI_CH0_ES_ADDR);
 	WRITEL(buf_size, MFC_SI_CH0_ES_DEC_UNIT_SIZE);
 	WRITEL(CPB_BUF_SIZE, MFC_SI_CH0_CPB_SIZE);
-	WRITEL((buf_addr + CPB_BUF_SIZE - port0_base_paddr) >> 11, MFC_SI_CH0_DESC_ADDR);
+	WRITEL((mfc_ctx->desc_buff_paddr - port0_base_paddr) >> 11, MFC_SI_CH0_DESC_ADDR);
 	WRITEL(DESC_BUF_SIZE, MFC_SI_CH0_DESC_SIZE);
 
 	mfc_debug_L0("stream_paddr: 0x%08x, desc_paddr: 0x%08x\n", buf_addr, buf_addr + CPB_BUF_SIZE);
@@ -666,7 +678,11 @@ static void mfc_set_encode_init_param(struct mfc_inst_ctx *mfc_ctx, union mfc_ar
 
 	/* Set circular intra refresh MB count */
 	WRITEL(enc_init_mpeg4_arg->in_mb_refresh, MFC_ENC_CIR_CTRL);
-	WRITEL(MEM_STRUCT_TILE_ENC, MFC_ENC_MAP_FOR_CUR);
+
+	if (enc_init_mpeg4_arg->in_frame_map == 1)
+		WRITEL(MEM_STRUCT_TILE_ENC, MFC_ENC_MAP_FOR_CUR);
+	else
+		WRITEL(MEM_STRUCT_LINEAR, MFC_ENC_MAP_FOR_CUR);
 
 	/* Set padding control */
 	WRITEL((enc_init_mpeg4_arg->in_pad_ctrl_on << 31) |
@@ -1134,6 +1150,10 @@ static enum mfc_error_code mfc_encode_header(struct mfc_inst_ctx *mfc_ctx, union
 
 	init_arg->out_header_size = READL(MFC_SI_ENC_STREAM_SIZE);
 
+	if (mfc_ctx->buf_type == MFC_BUFFER_CACHE) {
+		dma_unmap_single(NULL, init_arg->out_p_addr.strm_ref_y,
+				init_arg->out_header_size, DMA_FROM_DEVICE);
+	}
 	mfc_debug("encoded header size (%d)\n", init_arg->out_header_size);
 
 	return MFCINST_RET_OK;
@@ -1190,6 +1210,23 @@ static enum mfc_error_code mfc_encode_one_frame(struct mfc_inst_ctx *mfc_ctx, un
 
 	mfc_ctx->forceSetFrameType = DONT_CARE;
 
+	if (mfc_ctx->buf_type == MFC_BUFFER_CACHE) {
+		unsigned char *in_vir;
+		unsigned int aligned_width;
+		unsigned int aligned_height;
+
+		in_vir = phys_to_virt(enc_arg->in_Y_addr);
+		aligned_width = ALIGN_TO_128B(mfc_ctx->img_width);
+		aligned_height = ALIGN_TO_32B(mfc_ctx->img_height);
+		dma_map_single(NULL, in_vir, aligned_width*aligned_height,
+				DMA_TO_DEVICE);
+
+		in_vir = phys_to_virt(enc_arg->in_CbCr_addr);
+		aligned_height = ALIGN_TO_32B(mfc_ctx->img_height/2);
+		dma_map_single(NULL, in_vir, aligned_width*aligned_height,
+				DMA_TO_DEVICE);
+	}
+
 	/* Try frame encoding */
 	WRITEL((FRAME << 16) | (mfc_ctx->InstNo), MFC_SI_CH0_INST_ID);
 	interrupt_flag = mfc_wait_for_done(R2H_CMD_FRAME_DONE_RET);
@@ -1209,6 +1246,11 @@ static enum mfc_error_code mfc_encode_one_frame(struct mfc_inst_ctx *mfc_ctx, un
 	enc_arg->out_encoded_size = READL(MFC_SI_ENC_STREAM_SIZE);
 	enc_arg->out_encoded_Y_paddr = READL(MFC_SI_ENCODED_Y_ADDR);
 	enc_arg->out_encoded_C_paddr = READL(MFC_SI_ENCODED_C_ADDR);
+
+	if (mfc_ctx->buf_type == MFC_BUFFER_CACHE) {
+		dma_unmap_single(NULL, enc_arg->in_strm_st,
+				enc_arg->out_encoded_size, DMA_FROM_DEVICE);
+	}
 
 	mfc_debug("-- frame type(%d) encodedSize(%d)\r\n",
 		   enc_arg->out_frame_type, enc_arg->out_encoded_size);
@@ -1324,6 +1366,25 @@ enum mfc_error_code mfc_init_decode(struct mfc_inst_ctx *mfc_ctx, union mfc_args
 			(mfc_ctx->displayDelay << 16)) : 0)),
 			MFC_SI_CH0_DPB_CONFIG_CTRL);
 
+	/* Set Available Type */
+	if (mCheckType == false) {
+		nSize = mfc_ctx->img_width * mfc_ctx->img_height;
+		mfc_ctx->shared_mem.p720_limit_enable = 49425;
+		if (nSize > BOUND_MEMORY_SIZE) {
+			/* In case of no instance, we should not release codec instance */
+			if (mfc_ctx->InstNo >= 0)
+				mfc_return_inst_no(mfc_ctx->InstNo, mfc_ctx->MfcCodecType);
+
+			return MFCINST_ERR_FRM_BUF_SIZE;
+		}
+	} else {
+		mfc_ctx->shared_mem.p720_limit_enable = 49424;
+	}
+
+	WRITEL_SHARED_MEM(mfc_ctx->shared_mem.p720_limit_enable,
+			  mfc_ctx->shared_mem_vaddr + P720_LIMIT_ENABLE);
+	WRITEL((mfc_ctx->shared_mem_paddr - mfc_port0_base_paddr), MFC_SI_CH0_HOST_WR_ADR);
+
 	/* Codec Command : Decode a sequence header */
 	WRITEL((SEQ_HEADER << 16) | (mfc_ctx->InstNo), MFC_SI_CH0_INST_ID);
 
@@ -1415,23 +1476,6 @@ enum mfc_error_code mfc_init_decode(struct mfc_inst_ctx *mfc_ctx, union mfc_args
 	}
 
 	mfc_set_dec_frame_buffer(mfc_ctx);
-
-	/*
-	  * Set Available Type
-	  */
-   if (mCheckType == false) {
-		nSize = mfc_ctx->img_width * mfc_ctx->img_height;
-		mfc_ctx->shared_mem.p720_limit_enable = 49425;
-		if (nSize > BOUND_MEMORY_SIZE) {
-			/* In case of no instance, we should not release codec instance */
-			if (mfc_ctx->InstNo >= 0)
-				mfc_return_inst_no(mfc_ctx->InstNo, mfc_ctx->MfcCodecType);
-
-			return MFCINST_ERR_FRM_BUF_SIZE;
-		}
-   } else {
-	   mfc_ctx->shared_mem.p720_limit_enable = 49424;
-   }
 
 #ifdef ENABLE_DEBUG_MFC_INIT
 #if ENABLE_DEBUG_MFC_INIT
@@ -1695,6 +1739,23 @@ enum mfc_error_code mfc_exe_decode(struct mfc_inst_ctx *mfc_ctx, union mfc_args 
 
 		mfc_ctx->shared_mem.start_byte_num = 0;
 
+	}
+
+	if (mfc_ctx->buf_type == MFC_BUFFER_CACHE) {
+		if (((READL(MFC_SI_DISPLAY_STATUS) & 0x3) == DECODING_DISPLAY) ||
+		((READL(MFC_SI_DISPLAY_STATUS) & 0x3) == DISPLAY_ONLY)) {
+			unsigned int aligned_width;
+			unsigned int aligned_height;
+
+			aligned_width = ALIGN_TO_128B(mfc_ctx->img_width);
+			aligned_height = ALIGN_TO_32B(mfc_ctx->img_height);
+			dma_unmap_single(NULL, dec_arg->out_display_Y_addr,
+				aligned_width*aligned_height, DMA_FROM_DEVICE);
+
+			aligned_height = ALIGN_TO_32B(mfc_ctx->img_height/2);
+			dma_unmap_single(NULL, dec_arg->out_display_C_addr,
+				aligned_width*aligned_height, DMA_FROM_DEVICE);
+		}
 	}
 
 	mfc_debug_L0("--\n");

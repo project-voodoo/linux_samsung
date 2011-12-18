@@ -62,7 +62,9 @@ static u32 etb_ctl;
 static void cs_pm_prep(void)
 {
 	int save_count;
-	orig_pm_cpu_prep();
+
+	if (orig_pm_cpu_prep)
+		orig_pm_cpu_prep();
 
 	cs_unlock(cs_etb_regs);
 	etb_ctl = readl(cs_etb_regs + ETBR_CTRL);
@@ -104,7 +106,8 @@ static void cs_pm_resume(void)
 	writel(0, cs_etm_regs + ETMMR_OSLAR);
 	cs_relock(cs_etm_regs);
 
-	orig_pm_cpu_restore();
+	if (orig_pm_cpu_restore)
+		orig_pm_cpu_restore();
 }
 
 static void cs_pm_init(void)

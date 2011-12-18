@@ -210,7 +210,7 @@ static ssize_t s3c_jpeg_read(struct file *file, char *buf,
 	return 0;
 }
 
-static int s3c_jpeg_ioctl(struct inode *inode, struct file *file,
+static long s3c_jpeg_ioctl(struct file *file,
 			  unsigned int cmd, unsigned long arg)
 {
 	struct s5pc110_jpg_ctx		*jpg_reg_ctx;
@@ -372,7 +372,7 @@ static const struct file_operations jpeg_fops = {
 	.owner =	THIS_MODULE,
 	.open =		s3c_jpeg_open,
 	.release =	s3c_jpeg_release,
-	.ioctl =	s3c_jpeg_ioctl,
+	.unlocked_ioctl =	s3c_jpeg_ioctl,
 	.read =		s3c_jpeg_read,
 	.write =	s3c_jpeg_write,
 	.mmap =		s3c_jpeg_mmap,

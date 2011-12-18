@@ -253,8 +253,7 @@ static int kr3dm_set_delay(struct kr3dm_data *kr3dm, s64 delay_ns)
 }
 
 /*  ioctl command for KR3DM device file */
-static int kr3dm_ioctl(struct inode *inode, struct file *file,
-		       unsigned int cmd, unsigned long arg)
+static long kr3dm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	int err = 0;
 	struct kr3dm_data *kr3dm = file->private_data;
@@ -334,7 +333,7 @@ static const struct file_operations kr3dm_fops = {
 	.owner = THIS_MODULE,
 	.open = kr3dm_open,
 	.release = kr3dm_close,
-	.ioctl = kr3dm_ioctl,
+	.unlocked_ioctl = kr3dm_ioctl,
 };
 
 static int kr3dm_setup_irq(struct kr3dm_data *kr3dm)

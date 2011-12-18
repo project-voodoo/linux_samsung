@@ -16,6 +16,7 @@
 
 #include <linux/init.h>
 #include <linux/suspend.h>
+#include <linux/syscore_ops.h>
 #include <linux/io.h>
 
 #include <plat/cpu.h>
@@ -141,6 +142,24 @@ static void s5pv210_pm_prepare(void)
 	s3c_pm_do_save(core_save, ARRAY_SIZE(core_save));
 }
 
+static int s5pv210_pm_add(struct sys_device *sysdev)
+{
+	pm_cpu_prep = s5pv210_pm_prepare;
+	pm_cpu_sleep = s5pv210_cpu_suspend;
+
+	return 0;
+}
+
+static struct sysdev_driver s5pv210_pm_driver = {
+	.add		= s5pv210_pm_add,
+};
+
+static __init int s5pv210_pm_drvinit(void)
+{
+	return sysdev_driver_register(&s5pv210_sysclass, &s5pv210_pm_driver);
+}
+arch_initcall(s5pv210_pm_drvinit);
+
 static void s5pv210_pm_resume(void)
 {
 	u32 tmp, audiodomain_on;
@@ -168,12 +187,13 @@ static void s5pv210_pm_resume(void)
 	s3c_pm_do_restore_core(core_save, ARRAY_SIZE(core_save));
 }
 
-static __init int s5pv210_pm_drvinit(void)
+static struct syscore_ops s5pv210_pm_syscore_ops = {
+	.resume		= s5pv210_pm_resume,
+};
+
+static __init int s5pv210_pm_syscore_init(void)
 {
-	pm_cpu_prep = s5pv210_pm_prepare;
-	pm_cpu_sleep = s5pv210_cpu_suspend;
-	pm_cpu_restore = s5pv210_pm_resume;
+	register_syscore_ops(&s5pv210_pm_syscore_ops);
 	return 0;
 }
-
-arch_initcall(s5pv210_pm_drvinit);
+arch_initcall(s5pv210_pm_syscore_init);

@@ -299,7 +299,7 @@ static void etm_dump(void)
 	etb_lock(t);
 }
 
-static void sysrq_etm_dump(int key, struct tty_struct *tty)
+static void sysrq_etm_dump(int key)
 {
 	if (!mutex_trylock(&tracer.mutex)) {
 		printk(KERN_INFO "Tracing hardware busy\n");
@@ -400,6 +400,7 @@ static const struct file_operations etb_fops = {
 	.read = etb_read,
 	.open = etb_open,
 	.release = etb_release,
+	.llseek = no_llseek,
 };
 
 static struct miscdevice etb_miscdev = {
@@ -408,7 +409,7 @@ static struct miscdevice etb_miscdev = {
 	.fops = &etb_fops,
 };
 
-static int __init etb_probe(struct amba_device *dev, struct amba_id *id)
+static int __devinit etb_probe(struct amba_device *dev, const struct amba_id *id)
 {
 	struct tracectx *t = &tracer;
 	int ret = 0;
@@ -696,7 +697,7 @@ static struct kobj_attribute trace_data_range_attr =
 	__ATTR(trace_data_range, 0644,
 		trace_data_range_show, trace_data_range_store);
 
-static int __init etm_probe(struct amba_device *dev, struct amba_id *id)
+static int __devinit etm_probe(struct amba_device *dev, const struct amba_id *id)
 {
 	struct tracectx *t = &tracer;
 	int ret = 0;

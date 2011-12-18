@@ -730,11 +730,6 @@ static int modem_start(struct modemctl *mc, int ramdump)
 		return -EIO;
 	}
 
-	if (mmio_sem(mc) != 1) {
-		pr_err("[MODEM] we do not own the semaphore\n");
-		return -EIO;
-	}
-
 	writel(0, mc->mmio + OFF_SEM);
 	if (ramdump) {
 		mc->status = MODEM_BOOTING_RAMDUMP;
@@ -766,9 +761,6 @@ static int modem_start(struct modemctl *mc, int ramdump)
 static int modem_reset(struct modemctl *mc)
 {
 	pr_info("[MODEM] modem_reset()\n");
-
-	/* ensure phone active pin irq type */
-	set_irq_type(mc->gpio_phone_active, IRQ_TYPE_EDGE_BOTH);
 
 	/* ensure pda active pin set to low */
 	gpio_set_value(mc->gpio_pda_active, 0);
@@ -881,6 +873,7 @@ static long modemctl_ioctl(struct file *filp,
 
 static const struct file_operations modemctl_fops = {
 	.owner =		THIS_MODULE,
+	.llseek =		default_llseek,
 	.open =			modemctl_open,
 	.release =		modemctl_release,
 	.read =			modemctl_read,

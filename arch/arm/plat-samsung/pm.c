@@ -208,15 +208,15 @@ static void s3c_pm_restore_uarts(void) { }
 unsigned long s3c_irqwake_intmask	= 0xffffffffL;
 unsigned long s3c_irqwake_eintmask	= 0xffffffffL;
 
-int s3c_irqext_wake(unsigned int irqno, unsigned int state)
+int s3c_irqext_wake(struct irq_data *data, unsigned int state)
 {
-	unsigned long bit = 1L << IRQ_EINT_BIT(irqno);
+	unsigned long bit = 1L << IRQ_EINT_BIT(data->irq);
 
 	if (!(s3c_irqwake_eintallow & bit))
 		return -ENOENT;
 
 	printk(KERN_INFO "wake %s for irq %d\n",
-	       state ? "enabled" : "disabled", irqno);
+	       state ? "enabled" : "disabled", data->irq);
 
 	if (!state)
 		s3c_irqwake_eintmask |= bit;
@@ -282,8 +282,9 @@ void s3c_pm_do_restore_core(struct sleep_save *ptr, int count)
  *
  * print any IRQs asserted at resume time (ie, we woke from)
 */
-static void s3c_pm_show_resume_irqs(int start, unsigned long which,
-				    unsigned long mask)
+static void __maybe_unused s3c_pm_show_resume_irqs(int start,
+						   unsigned long which,
+						   unsigned long mask)
 {
 	int i;
 
@@ -310,8 +311,6 @@ void (*pm_cpu_restore)(void);
 
 static int s3c_pm_enter(suspend_state_t state)
 {
-	static unsigned long regs_save[16];
-
 	/* ensure the debug is initialised (if enabled) */
 
 	s3c_pm_debug_init();
@@ -334,12 +333,6 @@ static int s3c_pm_enter(suspend_state_t state)
 		printk(KERN_ERR "%s: Aborting sleep\n", __func__);
 		return -EINVAL;
 	}
-
-	/* store the physical address of the register recovery block */
-
-	s3c_sleep_save_phys = virt_to_phys(regs_save);
-
-	S3C_PMDBG("s3c_sleep_save_phys=0x%08lx\n", s3c_sleep_save_phys);
 
 	/* save all necessary core registers not covered by the drivers */
 
@@ -380,7 +373,7 @@ static int s3c_pm_enter(suspend_state_t state)
 
 	pmstats->sleep_count++;
 	pmstats->sleep_freq = __raw_readl(S5P_CLK_DIV0);
-	s3c_cpu_save(regs_save);
+	s3c_cpu_save(0, PLAT_PHYS_OFFSET - PAGE_OFFSET);
 	pmstats->wake_count++;
 	pmstats->wake_freq = __raw_readl(S5P_CLK_DIV0);
 
@@ -420,12 +413,6 @@ static int s3c_pm_enter(suspend_state_t state)
 	return 0;
 }
 
-/* callback from assembly code */
-void s3c_pm_cb_flushcache(void)
-{
-	flush_cache_all();
-}
-
 static int s3c_pm_prepare(void)
 {
 	/* prepare check area if configured */
@@ -439,7 +426,7 @@ static void s3c_pm_finish(void)
 	s3c_pm_check_cleanup();
 }
 
-static struct platform_suspend_ops s3c_pm_ops = {
+static const struct platform_suspend_ops s3c_pm_ops = {
 	.enter		= s3c_pm_enter,
 	.prepare	= s3c_pm_prepare,
 	.finish		= s3c_pm_finish,
