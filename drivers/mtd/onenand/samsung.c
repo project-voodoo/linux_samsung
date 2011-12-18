@@ -22,6 +22,7 @@
 #include <linux/mtd/onenand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/dma-mapping.h>
+#include <linux/interrupt.h>
 #include <linux/clk.h>
 
 #include <asm/mach/flash.h>
@@ -29,10 +30,8 @@
 
 #include <linux/io.h>
 
-#ifdef CONFIG_MTD_PARTITIONS
 #include <asm/setup.h>
 #include <linux/string.h>
-#endif
 
 enum soc_type {
 	TYPE_S3C6400,
@@ -103,7 +102,7 @@ struct mtd_partition s3c_partition_info[] = {
 #define MAP_11				(0x3)
 
 #define S3C64XX_CMD_MAP_SHIFT		24
-#define S5PC1XX_CMD_MAP_SHIFT		26
+#define S5PC100_CMD_MAP_SHIFT		26
 
 #define S3C6400_FBA_SHIFT		10
 #define S3C6400_FPA_SHIFT		4
@@ -126,6 +125,17 @@ struct mtd_partition s3c_partition_info[] = {
 #define S5PC110_DMA_TRANS_CMD		0x418
 #define S5PC110_DMA_TRANS_STATUS	0x41C
 #define S5PC110_DMA_TRANS_DIR		0x420
+#define S5PC110_INTC_DMA_CLR		0x1004
+#define S5PC110_INTC_ONENAND_CLR	0x1008
+#define S5PC110_INTC_DMA_MASK		0x1024
+#define S5PC110_INTC_ONENAND_MASK	0x1028
+#define S5PC110_INTC_DMA_PEND		0x1044
+#define S5PC110_INTC_ONENAND_PEND	0x1048
+#define S5PC110_INTC_DMA_STATUS		0x1064
+#define S5PC110_INTC_ONENAND_STATUS	0x1068
+
+#define S5PC110_INTC_DMA_TD		(1 << 24)
+#define S5PC110_INTC_DMA_TE		(1 << 16)
 
 #define S5PC110_DMA_CFG_SINGLE		(0x0 << 16)
 #define S5PC110_DMA_CFG_4BURST		(0x2 << 16)
@@ -179,9 +189,8 @@ struct s3c_onenand {
 	void __iomem	*dma_addr;
 	struct resource *dma_res;
 	unsigned long	phys_base;
-#ifdef CONFIG_MTD_PARTITIONS
+	struct completion	complete;
 	struct mtd_partition *parts;
-#endif
 };
 
 #define CMD_MAP_00(dev, addr)		(dev->cmd_map(MAP_00, ((addr) << 1)))
@@ -191,9 +200,7 @@ struct s3c_onenand {
 
 static struct s3c_onenand *onenand;
 
-#ifdef CONFIG_MTD_PARTITIONS
 static const char *part_probes[] = { "cmdlinepart", NULL, };
-#endif
 
 static inline int s3c_read_reg(int offset)
 {
@@ -229,7 +236,6 @@ static void s3c_dump_reg(void)
 }
 #endif
 
-#ifdef CONFIG_MTD_PARTITIONS
 struct slsi_ptbl_entry {
 	char name[16];
 	__u32 offset;
@@ -279,7 +285,6 @@ static int __init parse_tag_partition(const struct tag *tag)
 	return 0;
 }
 __tagtable(ATAG_SLSI_PARTITION, parse_tag_partition);
-#endif
 
 static unsigned int s3c64xx_cmd_map(unsigned type, unsigned val)
 {
@@ -288,7 +293,7 @@ static unsigned int s3c64xx_cmd_map(unsigned type, unsigned val)
 
 static unsigned int s5pc1xx_cmd_map(unsigned type, unsigned val)
 {
-	return (type << S5PC1XX_CMD_MAP_SHIFT) | val;
+	return (type << S5PC100_CMD_MAP_SHIFT) | val;
 }
 
 static unsigned int s3c6400_mem_addr(int fba, int fpa, int fsa)
@@ -628,10 +633,13 @@ static int onenand_write_bufferram(struct mtd_info *mtd, int area,
 	return 0;
 }
 
-static int s5pc110_dma_ops(void *dst, void *src, size_t count, int direction)
+static int (*s5pc110_dma_ops)(void *dst, void *src, size_t count, int direction);
+
+static int s5pc110_dma_poll(void *dst, void *src, size_t count, int direction)
 {
 	void __iomem *base = onenand->dma_addr;
 	int status;
+	unsigned long timeout;
 
 	writel(src, base + S5PC110_DMA_SRC_ADDR);
 	writel(dst, base + S5PC110_DMA_DST_ADDR);
@@ -649,17 +657,78 @@ static int s5pc110_dma_ops(void *dst, void *src, size_t count, int direction)
 
 	writel(S5PC110_DMA_TRANS_CMD_TR, base + S5PC110_DMA_TRANS_CMD);
 
+	/*
+	 * There's no exact timeout values at Spec.
+	 * In real case it takes under 1 msec.
+	 * So 20 msecs are enough.
+	 */
+	timeout = jiffies + msecs_to_jiffies(20);
+
 	do {
 		status = readl(base + S5PC110_DMA_TRANS_STATUS);
-	} while (!(status & S5PC110_DMA_TRANS_STATUS_TD));
-
-	if (status & S5PC110_DMA_TRANS_STATUS_TE) {
-		writel(S5PC110_DMA_TRANS_CMD_TEC, base + S5PC110_DMA_TRANS_CMD);
-		writel(S5PC110_DMA_TRANS_CMD_TDC, base + S5PC110_DMA_TRANS_CMD);
-		return -EIO;
-	}
+		if (status & S5PC110_DMA_TRANS_STATUS_TE) {
+			writel(S5PC110_DMA_TRANS_CMD_TEC,
+					base + S5PC110_DMA_TRANS_CMD);
+			return -EIO;
+		}
+	} while (!(status & S5PC110_DMA_TRANS_STATUS_TD) &&
+		time_before(jiffies, timeout));
 
 	writel(S5PC110_DMA_TRANS_CMD_TDC, base + S5PC110_DMA_TRANS_CMD);
+
+	return 0;
+}
+
+static irqreturn_t s5pc110_onenand_irq(int irq, void *data)
+{
+	void __iomem *base = onenand->dma_addr;
+	int status, cmd = 0;
+
+	status = readl(base + S5PC110_INTC_DMA_STATUS);
+
+	if (likely(status & S5PC110_INTC_DMA_TD))
+		cmd = S5PC110_DMA_TRANS_CMD_TDC;
+
+	if (unlikely(status & S5PC110_INTC_DMA_TE))
+		cmd = S5PC110_DMA_TRANS_CMD_TEC;
+
+	writel(cmd, base + S5PC110_DMA_TRANS_CMD);
+	writel(status, base + S5PC110_INTC_DMA_CLR);
+
+	if (!onenand->complete.done)
+		complete(&onenand->complete);
+
+	return IRQ_HANDLED;
+}
+
+static int s5pc110_dma_irq(void *dst, void *src, size_t count, int direction)
+{
+	void __iomem *base = onenand->dma_addr;
+	int status;
+
+	status = readl(base + S5PC110_INTC_DMA_MASK);
+	if (status) {
+		status &= ~(S5PC110_INTC_DMA_TD | S5PC110_INTC_DMA_TE);
+		writel(status, base + S5PC110_INTC_DMA_MASK);
+	}
+
+	writel(src, base + S5PC110_DMA_SRC_ADDR);
+	writel(dst, base + S5PC110_DMA_DST_ADDR);
+
+	if (direction == S5PC110_DMA_DIR_READ) {
+		writel(S5PC110_DMA_SRC_CFG_READ, base + S5PC110_DMA_SRC_CFG);
+		writel(S5PC110_DMA_DST_CFG_READ, base + S5PC110_DMA_DST_CFG);
+	} else {
+		writel(S5PC110_DMA_SRC_CFG_WRITE, base + S5PC110_DMA_SRC_CFG);
+		writel(S5PC110_DMA_DST_CFG_WRITE, base + S5PC110_DMA_DST_CFG);
+	}
+
+	writel(count, base + S5PC110_DMA_TRANS_SIZE);
+	writel(direction, base + S5PC110_DMA_TRANS_DIR);
+
+	writel(S5PC110_DMA_TRANS_CMD_TR, base + S5PC110_DMA_TRANS_CMD);
+
+	wait_for_completion_timeout(&onenand->complete, msecs_to_jiffies(20));
 
 	return 0;
 }
@@ -668,13 +737,13 @@ static int s5pc110_read_bufferram(struct mtd_info *mtd, int area,
 		unsigned char *buffer, int offset, size_t count)
 {
 	struct onenand_chip *this = mtd->priv;
-	void __iomem *bufferram;
 	void __iomem *p;
 	void *buf = (void *) buffer;
 	dma_addr_t dma_src, dma_dst;
-	int err;
+	int err, ofs, page_dma = 0;
+	struct device *dev = &onenand->pdev->dev;
 
-	p = bufferram = this->base + area;
+	p = this->base + area;
 	if (ONENAND_CURRENT_BUFFERRAM(this)) {
 		if (area == ONENAND_DATARAM)
 			p += this->writesize;
@@ -696,21 +765,30 @@ static int s5pc110_read_bufferram(struct mtd_info *mtd, int area,
 		page = vmalloc_to_page(buf);
 		if (!page)
 			goto normal;
-		buf = page_address(page) + ((size_t) buf & ~PAGE_MASK);
-	}
 
-	/* DMA routine */
-	dma_src = onenand->phys_base + (p - this->base);
-	dma_dst = dma_map_single(&onenand->pdev->dev,
-			buf, count, DMA_FROM_DEVICE);
-	if (dma_mapping_error(&onenand->pdev->dev, dma_dst)) {
-		dev_err(&onenand->pdev->dev,
-			"Couldn't map a %d byte buffer for DMA\n", count);
+		/* Page offset */
+		ofs = ((size_t) buf & ~PAGE_MASK);
+		page_dma = 1;
+
+		/* DMA routine */
+		dma_src = onenand->phys_base + (p - this->base);
+		dma_dst = dma_map_page(dev, page, ofs, count, DMA_FROM_DEVICE);
+	} else {
+		/* DMA routine */
+		dma_src = onenand->phys_base + (p - this->base);
+		dma_dst = dma_map_single(dev, buf, count, DMA_FROM_DEVICE);
+	}
+	if (dma_mapping_error(dev, dma_dst)) {
+		dev_err(dev, "Couldn't map a %d byte buffer for DMA\n", count);
 		goto normal;
 	}
 	err = s5pc110_dma_ops((void *) dma_dst, (void *) dma_src,
 			count, S5PC110_DMA_DIR_READ);
-	dma_unmap_single(&onenand->pdev->dev, dma_dst, count, DMA_FROM_DEVICE);
+
+	if (page_dma)
+		dma_unmap_page(dev, dma_dst, count, DMA_FROM_DEVICE);
+	else
+		dma_unmap_single(dev, dma_dst, count, DMA_FROM_DEVICE);
 
 	if (!err)
 		return 0;
@@ -718,7 +796,7 @@ static int s5pc110_read_bufferram(struct mtd_info *mtd, int area,
 normal:
 	if (count != mtd->writesize) {
 		/* Copy the bufferram to memory to prevent unaligned access */
-		memcpy(this->page_buf, bufferram, mtd->writesize);
+		memcpy(this->page_buf, p, mtd->writesize);
 		p = this->page_buf + offset;
 	}
 
@@ -858,7 +936,6 @@ static void s3c_onenand_setup(struct mtd_info *mtd)
 		onenand->cmd_map = s5pc1xx_cmd_map;
 	} else if (onenand->type == TYPE_S5PC110) {
 		/* Use generic onenand functions */
-		onenand->cmd_map = s5pc1xx_cmd_map;
 		this->read_bufferram = s5pc110_read_bufferram;
 		this->chip_probe = s5pc110_chip_probe;
 		return;
@@ -1014,6 +1091,20 @@ static int s3c_onenand_probe(struct platform_device *pdev)
 		}
 
 		onenand->phys_base = onenand->base_res->start;
+
+		s5pc110_dma_ops = s5pc110_dma_poll;
+		/* Interrupt support */
+		r = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+		if (r) {
+			init_completion(&onenand->complete);
+			s5pc110_dma_ops = s5pc110_dma_irq;
+			err = request_irq(r->start, s5pc110_onenand_irq,
+					IRQF_SHARED, "onenand", &onenand);
+			if (err) {
+				dev_err(&pdev->dev, "failed to get irq\n");
+				goto scan_failed;
+			}
+		}
 	}
 
 	if (onenand_scan(mtd, 1)) {
@@ -1030,13 +1121,12 @@ static int s3c_onenand_probe(struct platform_device *pdev)
 	if (s3c_read_reg(MEM_CFG_OFFSET) & ONENAND_SYS_CFG1_SYNC_READ)
 		dev_info(&onenand->pdev->dev, "OneNAND Sync. Burst Read enabled\n");
 
-#ifdef CONFIG_MTD_PARTITIONS
 #ifdef CONFIG_MTD_CMDLINE_PARTS
 	err = parse_mtd_partitions(mtd, part_probes, &onenand->parts, 0);
 	if (err > 0)
-		add_mtd_partitions(mtd, onenand->parts, err);
+		mtd_device_register(mtd, onenand->parts, err);
 	else if (err <= 0 && pdata && pdata->parts)
-		add_mtd_partitions(mtd, pdata->parts, pdata->nr_parts);
+		mtd_device_register(mtd, pdata->parts, pdata->nr_parts);
 	else
 #endif
 	if (num_partitions <= 0) {
@@ -1046,22 +1136,19 @@ static int s3c_onenand_probe(struct platform_device *pdev)
 	}
 
 	if (partitions && num_partitions > 0)
-		err = add_mtd_partitions(mtd, partitions, num_partitions);
+		err = mtd_device_register(mtd, partitions, num_partitions);
 	else
-#endif
-		err = add_mtd_device(mtd);
+		err = mtd_device_register(mtd, NULL, 0);
 
 
 /*
-#ifdef CONFIG_MTD_PARTITIONS
 	err = parse_mtd_partitions(mtd, part_probes, &onenand->parts, 0);
 	if (err > 0)
-		add_mtd_partitions(mtd, onenand->parts, err);
+		mtd_device_register(mtd, onenand->parts, err);
 	else if (err <= 0 && pdata && pdata->parts)
-		add_mtd_partitions(mtd, pdata->parts, pdata->nr_parts);
+		mtd_device_register(mtd, pdata->parts, pdata->nr_parts);
 	else
-#endif
-		err = add_mtd_device(mtd);
+		err = mtd_device_register(mtd, NULL, 0);
 */
 
 	platform_set_drvdata(pdev, mtd);

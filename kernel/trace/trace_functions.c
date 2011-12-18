@@ -54,14 +54,14 @@ function_trace_call_preempt_only(unsigned long ip, unsigned long parent_ip)
 	struct trace_array_cpu *data;
 	unsigned long flags;
 	long disabled;
-	int cpu, resched;
+	int cpu;
 	int pc;
 
 	if (unlikely(!ftrace_function_enabled))
 		return;
 
 	pc = preempt_count();
-	resched = ftrace_preempt_disable();
+	preempt_disable_notrace();
 	local_save_flags(flags);
 	cpu = raw_smp_processor_id();
 	data = tr->data[cpu];
@@ -71,7 +71,7 @@ function_trace_call_preempt_only(unsigned long ip, unsigned long parent_ip)
 		trace_function(tr, ip, parent_ip, flags, pc);
 
 	atomic_dec(&data->disabled);
-	ftrace_preempt_enable(resched);
+	preempt_enable_notrace();
 }
 
 static void
@@ -149,11 +149,13 @@ function_stack_trace_call(unsigned long ip, unsigned long parent_ip)
 static struct ftrace_ops trace_ops __read_mostly =
 {
 	.func = function_trace_call,
+	.flags = FTRACE_OPS_FL_GLOBAL,
 };
 
 static struct ftrace_ops trace_stack_ops __read_mostly =
 {
 	.func = function_stack_trace_call,
+	.flags = FTRACE_OPS_FL_GLOBAL,
 };
 
 /* Our two options */
@@ -322,7 +324,8 @@ ftrace_trace_onoff_unreg(char *glob, char *cmd, char *param)
 }
 
 static int
-ftrace_trace_onoff_callback(char *glob, char *cmd, char *param, int enable)
+ftrace_trace_onoff_callback(struct ftrace_hash *hash,
+			    char *glob, char *cmd, char *param, int enable)
 {
 	struct ftrace_probe_ops *ops;
 	void *count = (void *)-1;

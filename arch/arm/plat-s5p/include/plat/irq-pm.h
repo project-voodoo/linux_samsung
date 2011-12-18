@@ -12,5 +12,5 @@
 
 #ifndef __PLAT_S5P_IRQ_PM_H
 #define __PLAT_S5P_IRQ_PM_H
-int s3c_irq_wake(unsigned int irqno, unsigned int state);
+int s3c_irq_wake(struct irq_data *data, unsigned int state);
 #endif /* __PLAT_S5P_IRQ_PM_H */

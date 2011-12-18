@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2010, Intel Corp.
+ * Copyright (C) 2000 - 2011, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -212,6 +212,7 @@ acpi_ns_check_predefined_names(struct acpi_namespace_node *node,
 		goto cleanup;
 	}
 	data->predefined = predefined;
+	data->node = node;
 	data->node_flags = node->flags;
 	data->pathname = pathname;
 

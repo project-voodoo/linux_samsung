@@ -24,9 +24,9 @@
 #include <plat/sdhci.h>
 
 #include <plat/gpio-cfg.h>
+#include <plat/devs.h>
 #include <mach/regs-gpio.h>
 #include <mach/gpio.h>
-#include <asm/mach-types.h>
 
 #include "herring.h"
 
@@ -34,126 +34,10 @@
 
 char *s5pv210_hsmmc_clksrcs[4] = {
 	[0] = "hsmmc",		/* HCLK */
-	[1] = "hsmmc",		/* HCLK */
+	/* [1] = "hsmmc",	- duplicate HCLK entry */
 	[2] = "sclk_mmc",	/* mmc_bus */
-	[3] = NULL,		/*reserved */
+	/* [3] = NULL,		- reserved */
 };
-
-void s5pv210_setup_sdhci0_cfg_gpio(struct platform_device *dev, int width)
-{
-	unsigned int gpio;
-
-	switch (width) {
-	/* Channel 0 supports 4 and 8-bit bus width */
-	case 8:
-		/* Set all the necessary GPIO function and pull up/down */
-		for (gpio = S5PV210_GPG1(3); gpio <= S5PV210_GPG1(6); gpio++) {
-			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(3));
-			s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
-			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
-		}
-
-	case 0:
-	case 1:
-	case 4:
-		/* Set all the necessary GPIO function and pull up/down */
-		for (gpio = S5PV210_GPG0(0); gpio <= S5PV210_GPG0(6); gpio++) {
-			if (gpio != S5PV210_GPG0(2)) {
-				s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-				s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
-			}
-			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
-		}
-		break;
-	default:
-		printk(KERN_ERR "Wrong SD/MMC bus width : %d\n", width);
-	}
-
-	if (machine_is_herring()) {
-		s3c_gpio_cfgpin(S5PV210_GPJ2(7), S3C_GPIO_OUTPUT);
-		s3c_gpio_setpull(S5PV210_GPJ2(7), S3C_GPIO_PULL_NONE);
-		gpio_set_value(S5PV210_GPJ2(7), 1);
-	}
-}
-
-void s5pv210_setup_sdhci1_cfg_gpio(struct platform_device *dev, int width)
-{
-	unsigned int gpio;
-
-	switch (width) {
-	/* Channel 1 supports 4-bit bus width */
-	case 0:
-	case 1:
-	case 4:
-		/* Set all the necessary GPIO function and pull up/down */
-		for (gpio = S5PV210_GPG1(0); gpio <= S5PV210_GPG1(6); gpio++) {
-			if (gpio != S5PV210_GPG1(2)) {
-				s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-				s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
-			}
-			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
-		}
-		break;
-	default:
-		printk(KERN_ERR "Wrong SD/MMC bus width : %d\n", width);
-	}
-}
-
-void s5pv210_setup_sdhci2_cfg_gpio(struct platform_device *dev, int width)
-{
-	unsigned int gpio;
-
-	switch (width) {
-	/* Channel 2 supports 4 and 8-bit bus width */
-	case 8:
-		/* Set all the necessary GPIO function and pull up/down */
-		for (gpio = S5PV210_GPG3(3); gpio <= S5PV210_GPG3(6); gpio++) {
-			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(3));
-			s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
-			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
-		}
-
-	case 0:
-	case 1:
-	case 4:
-		if (machine_is_herring() && herring_is_cdma_wimax_dev())
-			break;
-		/* Set all the necessary GPIO function and pull up/down */
-		for (gpio = S5PV210_GPG2(0); gpio <= S5PV210_GPG2(6); gpio++) {
-			if (gpio != S5PV210_GPG2(2)) {
-				s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-				s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
-			}
-			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
-		}
-		break;
-	default:
-		printk(KERN_ERR "Wrong SD/MMC bus width : %d\n", width);
-	}
-}
-
-void s5pv210_setup_sdhci3_cfg_gpio(struct platform_device *dev, int width)
-{
-	unsigned int gpio;
-
-	switch (width) {
-	/* Channel 3 supports 4-bit bus width */
-	case 0:
-	case 1:
-	case 4:
-		/* Set all the necessary GPIO function and pull up/down */
-		for (gpio = S5PV210_GPG3(0); gpio <= S5PV210_GPG3(6); gpio++) {
-			if (gpio != S5PV210_GPG3(2)) {
-				s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-				s3c_gpio_setpull(gpio, S3C_GPIO_PULL_UP);
-			}
-			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
-		}
-		break;
-	default:
-		printk(KERN_ERR "Wrong SD/MMC bus width : %d\n", width);
-	}
-}
 
 #define S3C_SDHCI_CTRL3_FCSELTX_INVERT  (0)
 #define S3C_SDHCI_CTRL3_FCSELTX_BASIC \
@@ -190,8 +74,8 @@ void s5pv210_setup_sdhci_cfg_card(struct platform_device *dev,
 
 		if (card->type == MMC_TYPE_MMC)  /* MMC */
 			range_start = 20 * 1000 * 1000;
-		else    /* SD, SDIO */
-			range_start = 25 * 1000 * 1000;
+		//else    /* SD, SDIO */
+		//	range_start = 25 * 1000 * 1000;
 
 		range_end = 37 * 1000 * 1000;
 
@@ -201,10 +85,10 @@ void s5pv210_setup_sdhci_cfg_card(struct platform_device *dev,
 		else if (machine_is_herring() && herring_is_cdma_wimax_dev() &&
 								dev->id == 2) {
 			ctrl3 = S3C_SDHCI_CTRL3_FCSELTX_BASIC;
-			if(card->type & MMC_TYPE_SDIO)
+			//if(card->type & MMC_TYPE_SDIO)
 				ctrl3 |= S3C_SDHCI_CTRL3_FCSELRX_BASIC;
-			else
-				ctrl3 |= S3C_SDHCI_CTRL3_FCSELRX_INVERT;
+			//else
+			//	ctrl3 |= S3C_SDHCI_CTRL3_FCSELRX_INVERT;
 		} else
 			ctrl3 = S3C_SDHCI_CTRL3_FCSELTX_BASIC |
 				S3C_SDHCI_CTRL3_FCSELRX_INVERT;
@@ -258,51 +142,17 @@ void s5pv210_adjust_sdhci_cfg_card(struct s3c_sdhci_platdata *pdata,
 	writel(ctrl3, r + S3C_SDHCI_CONTROL3);
 }
 
-#if defined(CONFIG_MACH_SMDKV210)
-static void setup_sdhci0_gpio_wp(void)
-{
-	s3c_gpio_cfgpin(S5PV210_GPH0(7), S3C_GPIO_INPUT);
-	s3c_gpio_setpull(S5PV210_GPH0(7), S3C_GPIO_PULL_DOWN);
-}
-
-static int sdhci0_get_ro(struct mmc_host *mmc)
-{
-	return !!(readl(S5PV210_GPH0DAT) & 0x80);
-}
-#endif
-
-unsigned int universal_sdhci2_detect_ext_cd(void)
-{
-	unsigned int card_status = 0;
-
-#ifdef CONFIG_MMC_DEBUG
-	printk(KERN_DEBUG "Universal :SD Detect function\n");
-	printk(KERN_DEBUG "eint conf %x  eint filter conf %x",
-		readl(S5P_EINT_CON(3)), readl(S5P_EINT_FLTCON(3, 1)));
-	printk(KERN_DEBUG "eint pend %x  eint mask %x",
-		readl(S5P_EINT_PEND(3)), readl(S5P_EINT_MASK(3)));
-#endif
-	card_status = gpio_get_value(S5PV210_GPH3(4));
-	printk(KERN_DEBUG "Universal : Card status %d\n", card_status ? 0 : 1);
-	return card_status ? 0 : 1;
-
-}
-
 void universal_sdhci2_cfg_ext_cd(void)
 {
 	printk(KERN_DEBUG "Universal :SD Detect configuration\n");
 	s3c_gpio_setpull(S5PV210_GPH3(4), S3C_GPIO_PULL_NONE);
-	set_irq_type(IRQ_EINT(28), IRQ_TYPE_EDGE_BOTH);
+	irq_set_irq_type(IRQ_EINT(28), IRQ_TYPE_EDGE_BOTH);
 }
 
 static struct s3c_sdhci_platdata hsmmc0_platdata = {
 #if defined(CONFIG_S5PV210_SD_CH0_8BIT)
 	.max_width	= 8,
 	.host_caps	= MMC_CAP_8_BIT_DATA,
-#endif
-#if defined(CONFIG_MACH_SMDKV210)
-	.cfg_wp         = setup_sdhci0_gpio_wp,
-	.get_ro         = sdhci0_get_ro,
 #endif
 };
 
@@ -319,31 +169,95 @@ static struct s3c_sdhci_platdata hsmmc2_platdata = {
 static struct s3c_sdhci_platdata hsmmc3_platdata = { 0 };
 #endif
 
+static DEFINE_MUTEX(notify_lock);
+
+#define DEFINE_MMC_CARD_NOTIFIER(num) \
+static void (*hsmmc##num##_notify_func)(struct platform_device *, int state); \
+static int ext_cd_init_hsmmc##num(void (*notify_func)( \
+					struct platform_device *, int state)) \
+{ \
+	mutex_lock(&notify_lock); \
+	WARN_ON(hsmmc##num##_notify_func); \
+	hsmmc##num##_notify_func = notify_func; \
+	mutex_unlock(&notify_lock); \
+	return 0; \
+} \
+static int ext_cd_cleanup_hsmmc##num(void (*notify_func)( \
+					struct platform_device *, int state)) \
+{ \
+	mutex_lock(&notify_lock); \
+	WARN_ON(hsmmc##num##_notify_func != notify_func); \
+	hsmmc##num##_notify_func = NULL; \
+	mutex_unlock(&notify_lock); \
+	return 0; \
+}
+
+#ifdef CONFIG_S3C_DEV_HSMMC2
+DEFINE_MMC_CARD_NOTIFIER(2)
+#endif
+#ifdef CONFIG_S3C_DEV_HSMMC3
+DEFINE_MMC_CARD_NOTIFIER(3)
+#endif
+
+/*
+ * call this when you need sd stack to recognize insertion or removal of card
+ * that can't be told by SDHCI regs
+ */
+void sdhci_s3c_force_presence_change(struct platform_device *pdev)
+{
+	void (*notify_func)(struct platform_device *, int state) = NULL;
+	mutex_lock(&notify_lock);
+#ifdef CONFIG_S3C_DEV_HSMMC2
+	if (pdev == &s3c_device_hsmmc2)
+		notify_func = hsmmc2_notify_func;
+#endif
+#ifdef CONFIG_S3C_DEV_HSMMC3
+	if (pdev == &s3c_device_hsmmc3)
+		notify_func = hsmmc3_notify_func;
+#endif
+
+	if (notify_func)
+		notify_func(pdev, 1);
+	else
+		pr_warn("%s: called for device with no notifier\n", __func__);
+	mutex_unlock(&notify_lock);
+}
+EXPORT_SYMBOL_GPL(sdhci_s3c_force_presence_change);
+
 void s3c_sdhci_set_platdata(void)
 {
 #if defined(CONFIG_S3C_DEV_HSMMC)
+	if (machine_is_herring()) { /* TODO: move to mach-herring.c */
+		hsmmc0_platdata.cd_type = S3C_SDHCI_CD_PERMANENT;
+	}
 	s3c_sdhci0_set_platdata(&hsmmc0_platdata);
 #endif
 #if defined(CONFIG_S3C_DEV_HSMMC2)
 	if (machine_is_herring()) {
 		if (herring_is_cdma_wimax_dev()) {
+			hsmmc2_platdata.cd_type = S3C_SDHCI_CD_EXTERNAL;
+			hsmmc2_platdata.ext_cd_init = ext_cd_init_hsmmc2;
+			hsmmc2_platdata.ext_cd_cleanup = ext_cd_cleanup_hsmmc2;
 			hsmmc2_platdata.built_in = 1;
 			hsmmc2_platdata.must_maintain_clock = 1;
 			hsmmc2_platdata.enable_intr_on_resume = 1;
 		} else {
-			hsmmc2_platdata.ext_cd = IRQ_EINT(28);
-			hsmmc2_platdata.cfg_ext_cd =
-						universal_sdhci2_cfg_ext_cd;
-			hsmmc2_platdata.detect_ext_cd =
-						universal_sdhci2_detect_ext_cd;
+			hsmmc2_platdata.cd_type = S3C_SDHCI_CD_GPIO;
+			hsmmc2_platdata.ext_cd_gpio = S5PV210_GPH3(4);
+			hsmmc2_platdata.ext_cd_gpio_invert = true;
+			universal_sdhci2_cfg_ext_cd();
 		}
 	}
 
 	s3c_sdhci2_set_platdata(&hsmmc2_platdata);
 #endif
 #if defined(CONFIG_S3C_DEV_HSMMC3)
-	if (machine_is_herring())
+	if (machine_is_herring()) {
+		hsmmc3_platdata.cd_type = S3C_SDHCI_CD_EXTERNAL;
+		hsmmc3_platdata.ext_cd_init = ext_cd_init_hsmmc3;
+		hsmmc3_platdata.ext_cd_cleanup = ext_cd_cleanup_hsmmc3;
 		hsmmc3_platdata.built_in = 1;
+	}
 	s3c_sdhci3_set_platdata(&hsmmc3_platdata);
 #endif
 };

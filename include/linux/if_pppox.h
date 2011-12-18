@@ -42,28 +42,38 @@
  * PPPoE addressing definition 
  */ 
 typedef __be16 sid_t;
-struct pppoe_addr{ 
-       sid_t           sid;                    /* Session identifier */ 
-       unsigned char   remote[ETH_ALEN];       /* Remote address */ 
-       char            dev[IFNAMSIZ];          /* Local device to use */ 
+struct pppoe_addr {
+	sid_t         sid;                    /* Session identifier */
+	unsigned char remote[ETH_ALEN];       /* Remote address */
+	char          dev[IFNAMSIZ];          /* Local device to use */
 }; 
  
 /************************************************************************ 
- * Protocols supported by AF_PPPOX 
- */ 
+ * PPTP addressing definition
+ */
+struct pptp_addr {
+	__be16		call_id;
+	struct in_addr	sin_addr;
+};
+
+/************************************************************************
+ * Protocols supported by AF_PPPOX
+ */
 #define PX_PROTO_OE    0 /* Currently just PPPoE */
 #define PX_PROTO_OL2TP 1 /* Now L2TP also */
-#define PX_PROTO_OLAC  2
-#define PX_PROTO_OPNS  3
-#define PX_MAX_PROTO   4
+#define PX_PROTO_PPTP  2
+#define PX_PROTO_OLAC  3
+#define PX_PROTO_OPNS  4
+#define PX_MAX_PROTO   5
 
-struct sockaddr_pppox { 
-       sa_family_t     sa_family;            /* address family, AF_PPPOX */ 
-       unsigned int    sa_protocol;          /* protocol identifier */ 
-       union{ 
-               struct pppoe_addr       pppoe; 
-       }sa_addr; 
-}__attribute__ ((packed)); 
+struct sockaddr_pppox {
+	sa_family_t     sa_family;            /* address family, AF_PPPOX */
+	unsigned int    sa_protocol;          /* protocol identifier */
+	union {
+		struct pppoe_addr  pppoe;
+		struct pptp_addr   pptp;
+	} sa_addr;
+} __attribute__((packed));
 
 /* The use of the above union isn't viable because the size of this
  * struct must stay fixed over time -- applications use sizeof(struct
@@ -74,7 +84,7 @@ struct sockaddr_pppol2tp {
 	sa_family_t     sa_family;      /* address family, AF_PPPOX */
 	unsigned int    sa_protocol;    /* protocol identifier */
 	struct pppol2tp_addr pppol2tp;
-}__attribute__ ((packed));
+} __attribute__((packed));
 
 /* The L2TPv3 protocol changes tunnel and session ids from 16 to 32
  * bits. So we need a different sockaddr structure.
@@ -83,7 +93,7 @@ struct sockaddr_pppol2tpv3 {
 	sa_family_t     sa_family;      /* address family, AF_PPPOX */
 	unsigned int    sa_protocol;    /* protocol identifier */
 	struct pppol2tpv3_addr pppol2tp;
-} __attribute__ ((packed));
+} __attribute__((packed));
 
 /*********************************************************************
  *
@@ -105,7 +115,7 @@ struct pppoe_tag {
 	__be16 tag_type;
 	__be16 tag_len;
 	char tag_data[0];
-} __attribute ((packed));
+} __attribute__ ((packed));
 
 /* Tag identifiers */
 #define PTT_EOL		__cpu_to_be16(0x0000)
@@ -133,7 +143,7 @@ struct pppoe_hdr {
 	__be16 sid;
 	__be16 length;
 	struct pppoe_tag tag[0];
-} __attribute__ ((packed));
+} __attribute__((packed));
 
 /* Length of entire PPPoE + PPP header */
 #define PPPOE_SES_HLEN	8
@@ -152,6 +162,14 @@ struct pppoe_opt {
 	struct pppoe_addr	pa;	  /* what this socket is bound to*/
 	struct sockaddr_pppox	relay;	  /* what socket data will be
 					     relayed to (PPPoE relaying) */
+};
+
+struct pptp_opt {
+	struct pptp_addr src_addr;
+	struct pptp_addr dst_addr;
+	u32 ack_sent, ack_recv;
+	u32 seq_sent, seq_recv;
+	int ppp_flags;
 };
 
 struct pppolac_opt {
@@ -176,11 +194,12 @@ struct pppopns_opt {
 
 struct pppox_sock {
 	/* struct sock must be the first member of pppox_sock */
-	struct sock		sk;
-	struct ppp_channel	chan;
+	struct sock sk;
+	struct ppp_channel chan;
 	struct pppox_sock	*next;	  /* for hash table */
 	union {
 		struct pppoe_opt pppoe;
+		struct pptp_opt  pptp;
 		struct pppolac_opt lac;
 		struct pppopns_opt pns;
 	} proto;
@@ -210,7 +229,7 @@ struct pppox_proto {
 	struct module	*owner;
 };
 
-extern int register_pppox_proto(int proto_num, struct pppox_proto *pp);
+extern int register_pppox_proto(int proto_num, const struct pppox_proto *pp);
 extern void unregister_pppox_proto(int proto_num);
 extern void pppox_unbind_sock(struct sock *sk);/* delete ppp-channel binding */
 extern int pppox_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg);

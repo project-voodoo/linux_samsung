@@ -206,10 +206,6 @@ int hw_device_wakeup(struct net_adapter *adapter)
 			pr_debug("WiMAX active pin HIGH ..");
 			break;
 		}
-
-		pdata->wakeup_assert(0);
-		msleep(10);
-		pdata->wakeup_assert(1);
 	}
 
 	/* check WiMAX modem response */

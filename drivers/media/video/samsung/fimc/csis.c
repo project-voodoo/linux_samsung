@@ -213,11 +213,12 @@ static void s3c_csis_set_hs_settle(int settle)
 void s3c_csis_start(int lanes, int settle, int align, int width,
 		int height, int pixel_format)
 {
+	struct platform_device *pdev = to_platform_device(s3c_csis->dev);
 	struct s3c_platform_csis *pdata;
 
 	pdata = to_csis_plat(s3c_csis->dev);
 	if (pdata->cfg_phy_global)
-		pdata->cfg_phy_global(1);
+		pdata->cfg_phy_global(pdev, 1);
 
 	s3c_csis_reset();
 	s3c_csis_set_nr_lanes(lanes);
@@ -252,7 +253,7 @@ static void s3c_csis_stop(struct platform_device *pdev)
 
 	plat = to_csis_plat(&pdev->dev);
 	if (plat->cfg_phy_global)
-		plat->cfg_phy_global(0);
+		plat->cfg_phy_global(pdev, 0);
 }
 
 static irqreturn_t s3c_csis_irq(int irq, void *dev_id)
@@ -404,7 +405,7 @@ static struct platform_driver s3c_csis_driver = {
 	.suspend	= s3c_csis_suspend,
 	.resume		= s3c_csis_resume,
 	.driver		= {
-		.name	= "s3c-csis",
+		.name	= "s5p-mipi-csis",
 		.owner	= THIS_MODULE,
 	},
 };

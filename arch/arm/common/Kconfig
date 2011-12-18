@@ -7,6 +7,7 @@ config ARM_VIC
 config ARM_VIC_NR
 	int
 	default 4 if ARCH_S5PV210
+	default 3 if ARCH_S5PC100
 	default 2
 	depends on ARM_VIC
 	help
@@ -39,10 +40,6 @@ config SHARP_PARAM
 config SHARP_SCOOP
 	bool
 
-config COMMON_CLKDEV
-	bool
-	select HAVE_CLK
-
 config FIQ_GLUE
 	bool
 	select FIQ
@@ -51,12 +48,11 @@ config FIQ_DEBUGGER
 	bool "FIQ Mode Serial Debugger"
 	select FIQ
 	select FIQ_GLUE
-	select KERNEL_DEBUGGER_CORE
 	default n
 	help
 	  The FIQ serial debugger can accept commands even when the
 	  kernel is unresponsive due to being stuck with interrupts
-	  disabled.  Depends on the kernel debugger core in drivers/misc.
+	  disabled.
 
 
 config FIQ_DEBUGGER_NO_SLEEP
@@ -85,3 +81,11 @@ config FIQ_DEBUGGER_CONSOLE
 	help
 	  Enables a console so that printk messages are displayed on
 	  the debugger serial port as the occur.
+
+config FIQ_DEBUGGER_CONSOLE_DEFAULT_ENABLE
+	bool "Put the FIQ debugger into console mode by default"
+	depends on FIQ_DEBUGGER_CONSOLE
+	default n
+	help
+	  If enabled, this puts the fiq debugger into console mode by default.
+	  Otherwise, the fiq debugger will start out in debug mode.

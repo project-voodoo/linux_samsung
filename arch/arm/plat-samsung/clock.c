@@ -39,6 +39,9 @@
 #include <linux/clk.h>
 #include <linux/spinlock.h>
 #include <linux/io.h>
+#if defined(CONFIG_DEBUG_FS)
+#include <linux/debugfs.h>
+#endif
 
 #include <mach/hardware.h>
 #include <asm/irq.h>
@@ -47,6 +50,9 @@
 
 #include <plat/clock.h>
 #include <plat/cpu.h>
+
+#include <linux/serial_core.h>
+#include <plat/regs-serial.h> /* for s3c24xx_uart_devs */
 
 /* clock information */
 
@@ -63,6 +69,28 @@ DEFINE_SPINLOCK(clocks_lock);
 static int clk_null_enable(struct clk *clk, int enable)
 {
 	return 0;
+}
+
+static int dev_is_s3c_uart(struct device *dev)
+{
+	struct platform_device **pdev = s3c24xx_uart_devs;
+	int i;
+	for (i = 0; i < ARRAY_SIZE(s3c24xx_uart_devs); i++, pdev++)
+		if (*pdev && dev == &(*pdev)->dev)
+			return 1;
+	return 0;
+}
+
+/*
+ * Serial drivers call get_clock() very early, before platform bus
+ * has been set up, this requires a special check to let them get
+ * a proper clock
+ */
+
+static int dev_is_platform_device(struct device *dev)
+{
+	return dev->bus == &platform_bus_type ||
+	       (dev->bus == NULL && dev_is_s3c_uart(dev));
 }
 
 /* Clock API calls */
@@ -82,7 +110,7 @@ struct clk *clk_get(struct device *dev, const char *id)
 	struct clk *clk;
 	int idno;
 
-	if (dev == NULL || dev->bus != &platform_bus_type)
+	if (dev == NULL || !dev_is_platform_device(dev))
 		idno = -1;
 	else
 		idno = to_platform_device(dev)->id;
@@ -103,9 +131,13 @@ struct clk *clk_get(struct device *dev, const char *id)
 			goto found_it;
 
 	clk = ERR_PTR(-ENOENT);
+	pr_warning("%s: could not find clock %s for dev %pS (%s)\n",
+		   __func__, id, dev, dev ? dev_name(dev) : "");
 	spin_unlock(&clocks_lock);
 	return clk;
 found_it:
+	pr_debug("%s(%p, %s) found %s %d %pS\n",
+		 __func__, dev, id, clk->name, clk->id, clk->dev);
 	if (!try_module_get(clk->owner))
 		clk = ERR_PTR(-ENOENT);
 	spin_unlock(&clocks_lock);
@@ -114,37 +146,67 @@ found_it:
 
 void clk_put(struct clk *clk)
 {
+	pr_debug("%s on %s %d %pS", __func__, clk->name, clk->id, clk->dev);
 	module_put(clk->owner);
+}
+
+void _clk_enable(struct clk *clk)
+{
+	if (!clk || IS_ERR(clk))
+		return;
+
+	if ((clk->usage++) > 0)
+		return;
+
+	_clk_enable(clk->parent);
+	pr_debug("%s update hardware clock %s %d %pS\n",
+		 __func__, clk->name, clk->id, clk->dev);
+	(clk->enable)(clk, 1);
 }
 
 int clk_enable(struct clk *clk)
 {
-	if (IS_ERR(clk) || clk == NULL)
+	if (WARN_ON_ONCE(IS_ERR(clk) || clk == NULL)) {
+		pr_debug("%s request on invalid clock\n", __func__);
 		return -EINVAL;
-
-	clk_enable(clk->parent);
+	}
+	pr_debug("%s request on %s %d %pS\n",
+		 __func__, clk->name, clk->id, clk->dev);
 
 	spin_lock(&clocks_lock);
-
-	if ((clk->usage++) == 0)
-		(clk->enable)(clk, 1);
-
+	_clk_enable(clk);
 	spin_unlock(&clocks_lock);
+
 	return 0;
+}
+
+void _clk_disable(struct clk *clk)
+{
+	if (!clk || IS_ERR(clk))
+		return;
+	
+	if ((--clk->usage) > 0)
+		return;
+
+	pr_debug("%s update hardware clock  %s %d %pS\n",
+		 __func__, clk->name, clk->id, clk->dev);
+	(clk->enable)(clk, 0);
+	_clk_disable(clk->parent);
 }
 
 void clk_disable(struct clk *clk)
 {
-	if (IS_ERR(clk) || clk == NULL)
+	if (IS_ERR(clk) || clk == NULL) {
+		pr_debug("%s request on invalid clock\n", __func__);
 		return;
+	}
+
+	pr_debug("%s request on %s %d %pS\n",
+		 __func__, clk->name, clk->id, clk->dev);
 
 	spin_lock(&clocks_lock);
-
-	if ((--clk->usage) == 0)
-		(clk->enable)(clk, 0);
-
+	_clk_disable(clk);
 	spin_unlock(&clocks_lock);
-	clk_disable(clk->parent);
 }
 
 
@@ -330,6 +392,25 @@ int s3c24xx_register_clock(struct clk *clk)
 	BUG_ON(clk->list.prev != clk->list.next);
 
 	spin_lock(&clocks_lock);
+	if (clk->enable != clk_null_enable) {
+		struct clk *c;
+		list_for_each_entry(c, &clocks, list) {
+			if (c->enable == clk->enable &&
+			    c->ctrlbit & clk->ctrlbit) {
+				pr_warning("%s: new clock %s, id %d, dev %p "
+					   "uses same enable bit as "
+					   "%s, id %d, dev %p\n", __func__,
+					   clk->name, clk->id, clk->dev,
+					   c->name, c->id, c->dev);
+			}
+			if (!nullstrcmp(c->name, clk->name) &&
+			    c->id == clk->id && c->dev == clk->dev) {
+				pr_warning("%s: duplicate clock id: "
+					   "%s, id %d, dev %p\n", __func__,
+					   clk->name, clk->id, clk->dev);
+			}
+		}
+	}
 	list_add(&clk->list, &clocks);
 	spin_unlock(&clocks_lock);
 
@@ -397,7 +478,7 @@ void __init s3c_disable_clocks(struct clk *clkp, int nr_clks)
 		(clkp->enable)(clkp, 0);
 }
 
-/* initalise all the clocks */
+/* initialise all the clocks */
 
 int __init s3c24xx_register_baseclocks(unsigned long xtal)
 {
@@ -428,3 +509,109 @@ int __init s3c24xx_register_baseclocks(unsigned long xtal)
 	return 0;
 }
 
+#if defined(CONFIG_PM_DEBUG) && defined(CONFIG_DEBUG_FS)
+/* debugfs support to trace clock tree hierarchy and attributes */
+
+static struct dentry *clk_debugfs_root;
+
+static int clk_debugfs_register_one(struct clk *c)
+{
+	int err;
+	struct dentry *d, *child, *child_tmp;
+	struct clk *pa = c->parent;
+	char s[255];
+	char *p = s;
+	int i;
+
+	p += sprintf(p, "%s", c->name);
+
+	if (c->id >= 0)
+		p += sprintf(p, ":%d", c->id);
+
+	for (i = 1; i < 16; i++) {
+		d = debugfs_create_dir(s, clk_debugfs_root);
+		if (d)
+			break;
+		sprintf(p, " copy %d", i);
+	}
+	if (!d) {
+		pr_warning("%s: failed to register %s\n", __func__, s);
+		return 0;
+	}
+
+	c->dent = d;
+
+	if (pa) {
+		d = debugfs_create_symlink("parent",
+					   c->dent, pa->dent->d_name.name);
+		if (!d) {
+			err = -ENOMEM;
+			goto err_out;
+		}
+	}
+
+	d = debugfs_create_u8("usecount", S_IRUGO, c->dent, (u8 *)&c->usage);
+	if (!d) {
+		err = -ENOMEM;
+		goto err_out;
+	}
+
+	d = debugfs_create_u32("rate", S_IRUGO, c->dent, (u32 *)&c->rate);
+	if (!d) {
+		err = -ENOMEM;
+		goto err_out;
+	}
+	return 0;
+
+err_out:
+	d = c->dent;
+	list_for_each_entry_safe(child, child_tmp, &d->d_subdirs, d_u.d_child)
+		debugfs_remove(child);
+	debugfs_remove(c->dent);
+	return err;
+}
+
+static int clk_debugfs_register(struct clk *c)
+{
+	int err;
+	struct clk *pa = c->parent;
+
+	if (pa && !pa->dent) {
+		err = clk_debugfs_register(pa);
+		if (err)
+			return err;
+	}
+
+	if (!c->dent) {
+		err = clk_debugfs_register_one(c);
+		if (err)
+			return err;
+	}
+	return 0;
+}
+
+static int __init clk_debugfs_init(void)
+{
+	struct clk *c;
+	struct dentry *d;
+	int err;
+
+	d = debugfs_create_dir("clock", NULL);
+	if (!d)
+		return -ENOMEM;
+	clk_debugfs_root = d;
+
+	list_for_each_entry(c, &clocks, list) {
+		err = clk_debugfs_register(c);
+		if (err)
+			goto err_out;
+	}
+	return 0;
+
+err_out:
+	debugfs_remove_recursive(clk_debugfs_root);
+	return err;
+}
+late_initcall(clk_debugfs_init);
+
+#endif /* defined(CONFIG_PM_DEBUG) && defined(CONFIG_DEBUG_FS) */

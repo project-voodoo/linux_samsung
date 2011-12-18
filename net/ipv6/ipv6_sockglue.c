@@ -55,8 +55,6 @@
 
 #include <asm/uaccess.h>
 
-DEFINE_SNMP_STAT(struct ipstats_mib, ipv6_statistics) __read_mostly;
-
 struct ip6_ra_chain *ip6_ra_chain;
 DEFINE_RWLOCK(ip6_ra_lock);
 
@@ -344,6 +342,25 @@ static int do_ipv6_setsockopt(struct sock *sk, int level, int optname,
 		retv = 0;
 		break;
 
+	case IPV6_TRANSPARENT:
+		if (!capable(CAP_NET_ADMIN)) {
+			retv = -EPERM;
+			break;
+		}
+		if (optlen < sizeof(int))
+			goto e_inval;
+		/* we don't have a separate transparent bit for IPV6 we use the one in the IPv4 socket */
+		inet_sk(sk)->transparent = valbool;
+		retv = 0;
+		break;
+
+	case IPV6_RECVORIGDSTADDR:
+		if (optlen < sizeof(int))
+			goto e_inval;
+		np->rxopt.bits.rxorigdstaddr = valbool;
+		retv = 0;
+		break;
+
 	case IPV6_HOPOPTS:
 	case IPV6_RTHDRDSTOPTS:
 	case IPV6_RTHDR:
@@ -427,12 +444,12 @@ sticky_done:
 	{
 		struct ipv6_txoptions *opt = NULL;
 		struct msghdr msg;
-		struct flowi fl;
+		struct flowi6 fl6;
 		int junk;
 
-		fl.fl6_flowlabel = 0;
-		fl.oif = sk->sk_bound_dev_if;
-		fl.mark = sk->sk_mark;
+		memset(&fl6, 0, sizeof(fl6));
+		fl6.flowi6_oif = sk->sk_bound_dev_if;
+		fl6.flowi6_mark = sk->sk_mark;
 
 		if (optlen == 0)
 			goto update;
@@ -458,7 +475,7 @@ sticky_done:
 		msg.msg_controllen = optlen;
 		msg.msg_control = (void*)(opt+1);
 
-		retv = datagram_send_ctl(net, &msg, &fl, opt, &junk, &junk,
+		retv = datagram_send_ctl(net, &msg, &fl6, opt, &junk, &junk,
 					 &junk);
 		if (retv)
 			goto done;
@@ -896,7 +913,7 @@ static int ipv6_getsockopt_sticky(struct sock *sk, struct ipv6_txoptions *opt,
 }
 
 static int do_ipv6_getsockopt(struct sock *sk, int level, int optname,
-		    char __user *optval, int __user *optlen)
+		    char __user *optval, int __user *optlen, unsigned flags)
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	int len;
@@ -945,7 +962,7 @@ static int do_ipv6_getsockopt(struct sock *sk, int level, int optname,
 
 		msg.msg_control = optval;
 		msg.msg_controllen = len;
-		msg.msg_flags = 0;
+		msg.msg_flags = flags;
 
 		lock_sock(sk);
 		skb = np->pktoptions;
@@ -1106,6 +1123,14 @@ static int do_ipv6_getsockopt(struct sock *sk, int level, int optname,
 		break;
 	}
 
+	case IPV6_TRANSPARENT:
+		val = inet_sk(sk)->transparent;
+		break;
+
+	case IPV6_RECVORIGDSTADDR:
+		val = np->rxopt.bits.rxorigdstaddr;
+		break;
+
 	case IPV6_UNICAST_HOPS:
 	case IPV6_MULTICAST_HOPS:
 	{
@@ -1197,7 +1222,7 @@ int ipv6_getsockopt(struct sock *sk, int level, int optname,
 	if(level != SOL_IPV6)
 		return -ENOPROTOOPT;
 
-	err = do_ipv6_getsockopt(sk, level, optname, optval, optlen);
+	err = do_ipv6_getsockopt(sk, level, optname, optval, optlen, 0);
 #ifdef CONFIG_NETFILTER
 	/* we need to exclude all possible ENOPROTOOPTs except default case */
 	if (err == -ENOPROTOOPT && optname != IPV6_2292PKTOPTIONS) {
@@ -1239,7 +1264,8 @@ int compat_ipv6_getsockopt(struct sock *sk, int level, int optname,
 		return compat_mc_getsockopt(sk, level, optname, optval, optlen,
 			ipv6_getsockopt);
 
-	err = do_ipv6_getsockopt(sk, level, optname, optval, optlen);
+	err = do_ipv6_getsockopt(sk, level, optname, optval, optlen,
+				 MSG_CMSG_COMPAT);
 #ifdef CONFIG_NETFILTER
 	/* we need to exclude all possible ENOPROTOOPTs except default case */
 	if (err == -ENOPROTOOPT && optname != IPV6_2292PKTOPTIONS) {

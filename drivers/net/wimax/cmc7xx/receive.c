@@ -156,11 +156,6 @@ static u32 process_private_cmd(struct net_adapter *adapter, void *buffer)
 		break;
 	}
 	case HWCODEIDLENTFY: {
-		/* send called before modem indicating Idle message */
-		if (g_cfg->wimax_status == WIMAX_STATE_AWAKE_REQUESTED) {
-			pr_warning("IDLENTFY in AWAKE REQ");
-			break;
-		}
 		/* set idle / vi */
 		if (g_cfg->wimax_status == WIMAX_STATE_NORMAL
 				|| g_cfg->wimax_status == WIMAX_STATE_IDLE) {

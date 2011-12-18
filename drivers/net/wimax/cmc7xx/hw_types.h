@@ -47,8 +47,8 @@
 #define SDIO_INT_DATA_READY			0x01
 #define SDIO_INT_ERROR				0x02
 
-#define WAKEUP_MAX_TRY				20
-#define WAKEUP_TIMEOUT				200
+#define WAKEUP_MAX_TRY				6
+#define WAKEUP_TIMEOUT				2000
 
 /* packet types */
 enum {

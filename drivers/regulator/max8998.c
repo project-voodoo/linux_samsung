@@ -39,17 +39,12 @@ struct max8998_data {
 	struct max8998_dev	*iodev;
 	int			num_regulators;
 	struct regulator_dev	**rdev;
-	u8			dvsarm[MAX8998_N_DVSARM_REGS];
-	int			dvsarmidx;
-	int			dvsarm_enable;
-	int			set1_gpio;
-	int			set2_gpio;
-	u8			dvsint[MAX8998_N_DVSINT_REGS];
-	int			dvsintidx;
-	int			dvsint_enable;
-	int			set3_gpio;
-	bool			en_ramp;
-	u8			ramp;
+	u8                      buck1_vol[4]; /* voltages for selection */
+	u8                      buck2_vol[2];
+	unsigned int		buck1_idx; /* index to last changed voltage */
+					   /* value in a set */
+	unsigned int		buck2_idx;
+	unsigned int		gpio_reset_val;
 };
 
 struct voltage_map_desc {
@@ -124,11 +119,12 @@ static const struct voltage_map_desc *ldo_voltage_map[] = {
  * modified without temporarily lowering voltage out of spec and
  * without temporarily moving voltage in the wrong direction.  The
  * four voltages are indexed from 0-3 in increasing voltage value,
- * but are actually assigned to BUCK1_DVSARMn registers using the
- * ordering {0,1,3,2}.
+ * but are actually assigned to BUCK1_DVSARMn registers using
+ * ordering {0,1,3,2} when default Buck1 is 0 or 1,
+ * {1,0,2,3} when default Buck1 is 2 or 3.
  */
 
-#define DVSARMREG(index) (index ^ (index >> 1))
+#define DVSARMREG(index) ((index ^ (index >> 1)) ^ ((pdata->buck1_default_idx & 0x2) >> 1))
 
 static inline int max8998_get_ldo(struct regulator_dev *rdev)
 {
@@ -196,6 +192,7 @@ static int max8998_get_enable_register(struct regulator_dev *rdev,
 static int max8998_ldo_is_enabled(struct regulator_dev *rdev)
 {
 	struct max8998_data *max8998 = rdev_get_drvdata(rdev);
+	struct i2c_client *i2c = max8998->iodev->i2c;
 	int ret, reg, shift = 8;
 	u8 val;
 
@@ -203,7 +200,7 @@ static int max8998_ldo_is_enabled(struct regulator_dev *rdev)
 	if (ret)
 		return ret;
 
-	ret = max8998_read_reg(max8998->iodev, reg, &val);
+	ret = max8998_read_reg(i2c, reg, &val);
 	if (ret)
 		return ret;
 
@@ -213,31 +210,34 @@ static int max8998_ldo_is_enabled(struct regulator_dev *rdev)
 static int max8998_ldo_enable(struct regulator_dev *rdev)
 {
 	struct max8998_data *max8998 = rdev_get_drvdata(rdev);
+	struct i2c_client *i2c = max8998->iodev->i2c;
 	int reg, shift = 8, ret;
 
 	ret = max8998_get_enable_register(rdev, &reg, &shift);
 	if (ret)
 		return ret;
 
-	return max8998_update_reg(max8998->iodev, reg, 1<<shift, 1<<shift);
+	return max8998_update_reg(i2c, reg, 1<<shift, 1<<shift);
 }
 
 static int max8998_ldo_disable(struct regulator_dev *rdev)
 {
 	struct max8998_data *max8998 = rdev_get_drvdata(rdev);
+	struct i2c_client *i2c = max8998->iodev->i2c;
 	int reg, shift = 8, ret;
 
 	ret = max8998_get_enable_register(rdev, &reg, &shift);
 	if (ret)
 		return ret;
 
-	return max8998_update_reg(max8998->iodev, reg, 0, 1<<shift);
+	return max8998_update_reg(i2c, reg, 0, 1<<shift);
 }
 
 static int max8998_get_voltage_register(struct regulator_dev *rdev,
 				int *_reg, int *_shift, int *_mask)
 {
 	int ldo = max8998_get_ldo(rdev);
+	struct max8998_data *max8998 = rdev_get_drvdata(rdev);
 	int reg, shift = 0, mask = 0xff;
 
 	switch (ldo) {
@@ -274,10 +274,10 @@ static int max8998_get_voltage_register(struct regulator_dev *rdev,
 		reg = MAX8998_REG_LDO12 + (ldo - MAX8998_LDO12);
 		break;
 	case MAX8998_BUCK1:
-		reg = MAX8998_REG_BUCK1_DVSARM1;
+		reg = MAX8998_REG_BUCK1_VOLTAGE1 + max8998->buck1_idx;
 		break;
 	case MAX8998_BUCK2:
-		reg = MAX8998_REG_BUCK2_DVSINT1;
+		reg = MAX8998_REG_BUCK2_VOLTAGE1 + max8998->buck2_idx;
 		break;
 	case MAX8998_BUCK3:
 		reg = MAX8998_REG_BUCK3;
@@ -299,42 +299,34 @@ static int max8998_get_voltage_register(struct regulator_dev *rdev,
 static int max8998_get_voltage(struct regulator_dev *rdev)
 {
 	struct max8998_data *max8998 = rdev_get_drvdata(rdev);
-	int ldo = max8998_get_ldo(rdev);
+	struct i2c_client *i2c = max8998->iodev->i2c;
 	int reg, shift = 0, mask, ret;
 	u8 val;
 
-	if (ldo == MAX8998_BUCK1 && max8998->dvsarm[max8998->dvsarmidx])
-		val = max8998->dvsarm[max8998->dvsarmidx];
-	else if (ldo == MAX8998_BUCK2 && max8998->dvsint[max8998->dvsintidx])
-		val = max8998->dvsint[max8998->dvsintidx];
-	else {
-		ret = max8998_get_voltage_register(rdev, &reg, &shift, &mask);
-		if (ret)
-			return ret;
+	ret = max8998_get_voltage_register(rdev, &reg, &shift, &mask);
+	if (ret)
+		return ret;
 
-		ret = max8998_read_reg(max8998->iodev, reg, &val);
-		if (ret)
-			return ret;
+	ret = max8998_read_reg(i2c, reg, &val);
+	if (ret)
+		return ret;
 
-		val >>= shift;
-		val &= mask;
-	}
+	val >>= shift;
+	val &= mask;
 
 	return max8998_list_voltage(rdev, val);
 }
 
-static int max8998_set_voltage(struct regulator_dev *rdev,
-				int min_uV, int max_uV)
+static int max8998_set_voltage_ldo(struct regulator_dev *rdev,
+				   int min_uV, int max_uV, unsigned *selector)
 {
 	struct max8998_data *max8998 = rdev_get_drvdata(rdev);
+	struct i2c_client *i2c = max8998->iodev->i2c;
 	int min_vol = min_uV / 1000, max_vol = max_uV / 1000;
-	int previous_vol = 0;
 	const struct voltage_map_desc *desc;
 	int ldo = max8998_get_ldo(rdev);
 	int reg, shift = 0, mask, ret;
 	int i = 0;
-	int dvsidx;
-	bool dvsreplace = false;
 
 	if (ldo >= ARRAY_SIZE(ldo_voltage_map))
 		return -EINVAL;
@@ -353,125 +345,233 @@ static int max8998_set_voltage(struct regulator_dev *rdev,
 	if (desc->min + desc->step*i > max_vol)
 		return -EINVAL;
 
-	/*
-	 * See if the requested voltage is already in a BUCK1/2 DVS register
-	 * (will point the GPIO MUX to it below).  If not already in a
-	 * register, add the new voltage in sorted voltage value per
-	 * Gray code order.
-	 */
+	*selector = i;
 
-	if (ldo == MAX8998_BUCK1 && max8998->dvsarm_enable) {
-		for (dvsidx = 0; dvsidx < MAX8998_N_DVSARM_REGS; dvsidx++) {
-			if (i == max8998->dvsarm[DVSARMREG(dvsidx)])
-				break;
-			if ((i < max8998->dvsarm[DVSARMREG(dvsidx)]) ||
-			    !max8998->dvsarm[DVSARMREG(dvsidx)]) {
-				dvsreplace = true;
-				break;
-			}
-		}
+	ret = max8998_get_voltage_register(rdev, &reg, &shift, &mask);
+	if (ret)
+		return ret;
 
-		if (dvsidx == MAX8998_N_DVSARM_REGS) {
-			--dvsidx;
-			dvsreplace = true;
-		}
-	} else if (ldo == MAX8998_BUCK2 && max8998->dvsint_enable) {
-		for (dvsidx = 0; dvsidx < MAX8998_N_DVSINT_REGS; dvsidx++) {
-			if (i == max8998->dvsint[dvsidx])
-				break;
-			if (i < max8998->dvsint[dvsidx] ||
-			    !max8998->dvsint[dvsidx]) {
-				dvsreplace = true;
-				break;
-			}
-		}
+	ret = max8998_update_reg(i2c, reg, i<<shift, mask<<shift);
 
-		if (dvsidx == MAX8998_N_DVSINT_REGS) {
-			--dvsidx;
-			dvsreplace = true;
-		}
+	return ret;
+}
+
+static inline void buck1_gpio_set(int gpio1, int gpio2, int v, int w)
+{
+	if ((v & 1) == !w)
+		gpio_set_value(gpio1, !w);
+
+	gpio_set_value(gpio2, (v >> 1) & 0x1);
+
+	if ((v & 1) != !w)
+		gpio_set_value(gpio1, w);
+
+}
+static inline void buck2_gpio_set(int gpio, int v)
+{
+	gpio_set_value(gpio, v & 0x1);
+}
+
+
+static int max8998_set_voltage_buck(struct regulator_dev *rdev,
+				    int min_uV, int max_uV, unsigned *selector)
+{
+	struct max8998_data *max8998 = rdev_get_drvdata(rdev);
+	struct max8998_platform_data *pdata =
+		dev_get_platdata(max8998->iodev->dev);
+	struct i2c_client *i2c = max8998->iodev->i2c;
+	int min_vol = min_uV / 1000, max_vol = max_uV / 1000;
+	const struct voltage_map_desc *desc;
+	int buck = max8998_get_ldo(rdev);
+	int reg, shift = 0, mask, ret;
+	int difference = 0, i = 0, j = 0, previous_vol = 0, previous_idx = 0;
+	u8 val = 0;
+
+	if (buck >= ARRAY_SIZE(ldo_voltage_map))
+		return -EINVAL;
+
+	desc = ldo_voltage_map[buck];
+
+	if (desc == NULL)
+		return -EINVAL;
+
+	if (max_vol < desc->min || min_vol > desc->max)
+		return -EINVAL;
+
+	while (desc->min + desc->step*i < min_vol &&
+	       desc->min + desc->step*i < desc->max)
+		i++;
+
+	if (desc->min + desc->step*i > max_vol)
+		return -EINVAL;
+
+	*selector = i;
+
+	ret = max8998_get_voltage_register(rdev, &reg, &shift, &mask);
+	if (ret)
+		return ret;
+
+	previous_vol = max8998_get_voltage(rdev);
+
+	/* Check if voltage needs to be changed */
+	/* if previous_voltage equal new voltage, return */
+	if (previous_vol == max8998_list_voltage(rdev, i)) {
+		dev_dbg(max8998->dev, "No voltage change, old:%d, new:%d\n",
+			previous_vol, max8998_list_voltage(rdev, i));
+		return ret;
 	}
 
-	/* wait for RAMP_UP_DELAY if rdev is BUCK1/2 and
-	 * ENRAMP is ON */
-	if (ldo == MAX8998_BUCK1 || ldo == MAX8998_BUCK2)
-		if (max8998->en_ramp)
-			previous_vol = max8998_get_voltage(rdev);
+	switch (buck) {
+	case MAX8998_BUCK1:
+		dev_dbg(max8998->dev,
+			"BUCK1, i:%d, buck1_vol1:%d, buck1_vol2:%d\n\
+			 buck1_vol3:%d, buck1_vol4:%d\n",
+			i, max8998->buck1_vol[DVSARMREG(0)], max8998->buck1_vol[DVSARMREG(1)],
+			max8998->buck1_vol[DVSARMREG(2)], max8998->buck1_vol[DVSARMREG(3)]);
 
-	if (ldo == MAX8998_BUCK1 && max8998->dvsarm_enable) {
-		if (dvsreplace) {
-			ret = max8998_write_reg(max8998->iodev,
-						MAX8998_REG_BUCK1_DVSARM1 +
-						DVSARMREG(dvsidx), i);
+		if (gpio_is_valid(pdata->buck1_set1) &&
+		    gpio_is_valid(pdata->buck1_set2)) {
 
+			/* check if requested voltage */
+			/* value is already defined */
+			for (j = 0; j < ARRAY_SIZE(max8998->buck1_vol); j++) {
+				if (max8998->buck1_vol[DVSARMREG(j)] == i) {
+					buck1_gpio_set(pdata->buck1_set1, pdata->buck1_set2, DVSARMREG(j), max8998->gpio_reset_val);
+					max8998->buck1_idx = DVSARMREG(j);
+					dev_dbg(max8998->dev, "buck1_level=%d, buck1_index=%d \n", j, DVSARMREG(j));
+					goto buck1_exit;
+				}
+			}
+
+			if (pdata->buck_voltage_lock)
+				return -EINVAL;
+
+			/* No predefine regulator found
+			 * Once we reach here,
+			 * all remaining predefined voltage is cleared,
+			 * and two buck1_idx 0 and 1 are used as now.
+			 */
+			previous_idx = max8998->buck1_idx;
+			if (previous_idx == 0) {
+				max8998->buck1_idx = 1;
+			} else if (previous_idx == 1) {
+				max8998->buck1_idx = 0;
+			} else {
+				/* change possible intermediate level */
+				val = max8998->buck1_vol[max8998->buck1_idx];
+				if (previous_idx == 2) {
+					max8998->buck1_idx = 3;
+				} else if (previous_idx == 3) {
+					max8998->buck1_idx = 2;
+				}
+				ret = max8998_get_voltage_register(rdev, &reg, &shift, &mask);
+				if (ret) {
+					max8998->buck1_idx = previous_idx;
+					return ret;
+				}
+				ret = max8998_write_reg(i2c, reg, val);
+				if (ret) {
+					max8998->buck1_vol[max8998->buck1_idx] = 0;
+					max8998->buck1_idx = previous_idx;
+					return ret;
+				}
+
+				/* set index 1 with current voltage */
+				max8998->buck1_idx = 1;
+				ret = max8998_get_voltage_register(rdev, &reg, &shift, &mask);
+				if (ret) {
+					max8998->buck1_idx = previous_idx;
+					return ret;
+				}
+				ret = max8998_write_reg(i2c, reg, val);
+				if (ret) {
+					max8998->buck1_vol[max8998->buck1_idx] = 0;
+					max8998->buck1_idx = previous_idx;
+					return ret;
+				}
+				buck1_gpio_set(pdata->buck1_set1, pdata->buck1_set2, max8998->buck1_idx, max8998->gpio_reset_val);
+
+				/*Now, change to index 0*/
+				previous_idx = 1;
+				max8998->buck1_idx = 0;
+			}
+			dev_dbg(max8998->dev, "max8998->buck1_idx:%d\n",
+				max8998->buck1_idx);
+			max8998->buck1_vol[max8998->buck1_idx] = i;
+			ret = max8998_get_voltage_register(rdev, &reg, &shift, &mask);
 			if (ret) {
-				/*
-				 * Since we're not sure what's in the
-				 * register, zero out the values and
-				 * start all over collecting voltages
-				 * in sorted order.
-				 */
-				memset(max8998->dvsarm, 0,
-				       sizeof(max8998->dvsarm));
+				max8998->buck1_idx = previous_idx;
 				return ret;
 			}
-		}
-
-		/*
-		 * Ensure the intermediate transitory voltage selected
-		 * between updating the two GPIOs does not drop below
-		 * the final selected voltage, and is less than or
-		 * equal to the current voltage when scaling down,
-		 * or is greater than or equal to the current voltage
-		 * when scaling up.  That is, don't lower the voltage
-		 * temporarily out of spec, and don't move voltage
-		 * temporarily in the wrong direction.
-		 */
-
-		if (DVSARMREG(dvsidx) & 0x1)
-			gpio_set_value(max8998->set1_gpio, 1);
-
-		gpio_set_value(max8998->set2_gpio, DVSARMREG(dvsidx) & 0x2);
-
-		if (!(DVSARMREG(dvsidx) & 0x1))
-			gpio_set_value(max8998->set1_gpio, 0);
-
-		max8998->dvsarm[DVSARMREG(dvsidx)] = i;
-		max8998->dvsarmidx = DVSARMREG(dvsidx);
-		ret = 0;
-	} else if (ldo == MAX8998_BUCK2 && max8998->dvsint_enable) {
-		if (dvsreplace) {
-			ret = max8998_write_reg(max8998->iodev,
-						MAX8998_REG_BUCK2_DVSINT1 +
-						dvsidx, i);
-
+			ret = max8998_write_reg(i2c, reg, i);
 			if (ret) {
-				memset(max8998->dvsint, 0,
-				       sizeof(max8998->dvsint));
-
+				max8998->buck1_vol[max8998->buck1_idx] = 0;
+				max8998->buck1_idx = previous_idx;
 				return ret;
 			}
+			buck1_gpio_set(pdata->buck1_set1, pdata->buck1_set2, max8998->buck1_idx, max8998->gpio_reset_val);
+			for (j = 2; j < 4; j++)
+				max8998->buck1_vol[j] = 0;
+
+buck1_exit:
+			dev_dbg(max8998->dev, "%s: SET1:%d, SET2:%d\n",
+				i2c->name, gpio_get_value(pdata->buck1_set1),
+				gpio_get_value(pdata->buck1_set2));
+			break;
+		} else {
+			ret = max8998_write_reg(i2c, reg, i);
 		}
+		break;
 
-		gpio_set_value(max8998->set3_gpio, dvsidx);
-		max8998->dvsint[dvsidx] = i;
-		max8998->dvsintidx = dvsidx;
-		ret = 0;
-	} else {
-		ret = max8998_get_voltage_register(rdev, &reg, &shift, &mask);
-		if (ret)
-			return ret;
+	case MAX8998_BUCK2:
+		dev_dbg(max8998->dev,
+			"BUCK2, i:%d buck2_vol1:%d, buck2_vol2:%d\n"
+			, i, max8998->buck2_vol[0], max8998->buck2_vol[1]);
+		if (gpio_is_valid(pdata->buck2_set3)) {
 
-		ret = max8998_update_reg(max8998->iodev, reg, i<<shift,
-					 mask<<shift);
+			/* check if requested voltage */
+			/* value is already defined */
+			for (j = 0; j < ARRAY_SIZE(max8998->buck2_vol); j++) {
+				if (max8998->buck2_vol[j] == i) {
+					max8998->buck2_idx = j;
+					buck2_gpio_set(pdata->buck2_set3, j);
+					goto buck2_exit;
+				}
+			}
+
+			if (pdata->buck_voltage_lock)
+				return -EINVAL;
+
+			max8998_get_voltage_register(rdev,
+					&reg, &shift, &mask);
+			ret = max8998_write_reg(i2c, reg, i);
+			max8998->buck2_vol[max8998->buck2_idx] = i;
+			buck2_gpio_set(pdata->buck2_set3, max8998->buck2_idx);
+buck2_exit:
+			dev_dbg(max8998->dev, "%s: SET3:%d\n", i2c->name,
+				gpio_get_value(pdata->buck2_set3));
+		} else {
+			ret = max8998_write_reg(i2c, reg, i);
+		}
+		break;
+
+	case MAX8998_BUCK3:
+	case MAX8998_BUCK4:
+		ret = max8998_update_reg(i2c, reg, i<<shift, mask<<shift);
+		break;
 	}
 
-	if ((ldo == MAX8998_BUCK1 || ldo == MAX8998_BUCK2) &&
-	    max8998->en_ramp) {
-		int difference = desc->min + desc->step*i - previous_vol/1000;
-		if (difference > 0)
-			udelay(difference / (max8998->ramp + 1));
-	}
+	/* Voltage stabilization */
+	max8998_read_reg(i2c, MAX8998_REG_ONOFF4, &val);
+
+	/* lp3974 hasn't got ENRAMP bit - ramp is assumed as true */
+	/* MAX8998 has ENRAMP bit implemented, so test it*/
+	if (max8998->iodev->type == TYPE_MAX8998 && !(val & MAX8998_ENRAMP))
+		return ret;
+
+	difference = desc->min + desc->step*i - previous_vol/1000;
+	if (difference > 0)
+		udelay(difference / ((val & 0x0f) + 1));
 
 	return ret;
 }
@@ -482,7 +582,7 @@ static struct regulator_ops max8998_ldo_ops = {
 	.enable			= max8998_ldo_enable,
 	.disable		= max8998_ldo_disable,
 	.get_voltage		= max8998_get_voltage,
-	.set_voltage		= max8998_set_voltage,
+	.set_voltage		= max8998_set_voltage_ldo,
 	.set_suspend_enable	= max8998_ldo_enable,
 	.set_suspend_disable	= max8998_ldo_disable,
 };
@@ -493,7 +593,7 @@ static struct regulator_ops max8998_buck_ops = {
 	.enable			= max8998_ldo_enable,
 	.disable		= max8998_ldo_disable,
 	.get_voltage		= max8998_get_voltage,
-	.set_voltage		= max8998_set_voltage,
+	.set_voltage		= max8998_set_voltage_buck,
 	.set_suspend_enable	= max8998_ldo_enable,
 	.set_suspend_disable	= max8998_ldo_disable,
 };
@@ -666,8 +766,8 @@ static __devinit int max8998_pmic_probe(struct platform_device *pdev)
 	struct max8998_platform_data *pdata = dev_get_platdata(iodev->dev);
 	struct regulator_dev **rdev;
 	struct max8998_data *max8998;
-	int i, ret, size;
-	u8 val;
+	struct i2c_client *i2c;
+	int i, j, ret, size;
 
 	if (!pdata) {
 		dev_err(pdev->dev.parent, "No platform init data supplied\n");
@@ -690,12 +790,155 @@ static __devinit int max8998_pmic_probe(struct platform_device *pdev)
 	max8998->iodev = iodev;
 	max8998->num_regulators = pdata->num_regulators;
 	platform_set_drvdata(pdev, max8998);
-	max8998->set1_gpio = pdata->set1_gpio;
-	max8998->set2_gpio = pdata->set2_gpio;
-	max8998->dvsarm_enable = pdata->set1_gpio != -1 &&
-		pdata->set2_gpio != -1;
-	max8998->set3_gpio = pdata->set3_gpio;
-	max8998->dvsint_enable = pdata->set3_gpio != -1;
+	i2c = max8998->iodev->i2c;
+
+	max8998->buck1_idx = DVSARMREG(pdata->buck1_default_idx);
+	max8998->buck2_idx = pdata->buck2_default_idx;
+	max8998->gpio_reset_val =  (pdata->buck1_default_idx & 0x2) >> 1;
+
+
+
+	/* Check if MAX8998 voltage selection GPIOs are defined */
+	if (gpio_is_valid(pdata->buck1_set1) &&
+	    gpio_is_valid(pdata->buck1_set2)) {
+		/*
+		 * Calculate register value of voltage
+		 */
+		for (j = 0; j < 4; j++) {
+			int buck_vol;
+			switch (j) {
+			case 3:
+				buck_vol = pdata->buck1_voltage4;
+				break;
+			case 2:
+				buck_vol = pdata->buck1_voltage3;
+				break;
+			case 1:
+				buck_vol = pdata->buck1_voltage2;
+				break;
+			default:
+				buck_vol = pdata->buck1_voltage1;
+				break;
+			}
+			/* Set predefined value for BUCK1-4 registers */
+			i = 0;
+			while (buck12_voltage_map_desc.min +
+			       buck12_voltage_map_desc.step*i
+			       < (buck_vol / 1000))
+				i++;
+			max8998->buck1_vol[DVSARMREG(j)] = i;
+		}
+
+		/*
+		 * Reset all PMIC DVSARM1-4 registers to initial request value
+		 * By this, voltage drop will not happen with garbage gpio at bootup time
+		 */
+		for (j = 0; j < 4; j++) {
+			ret = max8998_write_reg(i2c, MAX8998_REG_BUCK1_VOLTAGE1 + DVSARMREG(j),
+						max8998->buck1_vol[max8998->buck1_idx]);
+			if (ret) {
+				max8998->buck1_vol[0] = 0;
+				max8998->buck1_vol[1] = 0;
+				max8998->buck1_vol[2] = 0;
+				max8998->buck1_vol[3] = 0;
+				goto err_free_mem;
+			}
+		}
+
+		/*
+		 * Set initial gpio
+		 */
+		/* Check if SET1 is not equal to 0 */
+		if (!pdata->buck1_set1) {
+			printk(KERN_ERR "MAX8998 SET1 GPIO defined as 0 !\n");
+			WARN_ON(!pdata->buck1_set1);
+			ret = -EIO;
+			goto err_free_mem;
+		}
+		/* Check if SET2 is not equal to 0 */
+		if (!pdata->buck1_set2) {
+			printk(KERN_ERR "MAX8998 SET2 GPIO defined as 0 !\n");
+			WARN_ON(!pdata->buck1_set2);
+			ret = -EIO;
+			goto err_free_mem;
+		}
+
+		gpio_request(pdata->buck1_set1, "MAX8998 BUCK1_SET1");
+		gpio_direction_output(pdata->buck1_set1,
+				      max8998->buck1_idx & 0x1);
+
+		gpio_request(pdata->buck1_set2, "MAX8998 BUCK1_SET2");
+		gpio_direction_output(pdata->buck1_set2,
+				      (max8998->buck1_idx >> 1) & 0x1);
+
+		/*
+		 * Write specified voltage to pmic registers
+		 */
+		for (j = 0; j < 4; j++) {
+
+			ret = max8998_write_reg(i2c, MAX8998_REG_BUCK1_VOLTAGE1 + DVSARMREG(j),
+						max8998->buck1_vol[DVSARMREG(j)]);
+			if (ret) {
+				max8998->buck1_vol[0] = 0;
+				max8998->buck1_vol[1] = 0;
+				max8998->buck1_vol[2] = 0;
+				max8998->buck1_vol[3] = 0;
+				goto err_free_mem;
+			}
+			dev_dbg(max8998->dev, "PMIC probe: index=%d, Gray coded index=%d, reg val=%d\n",
+						j, DVSARMREG(j),  max8998->buck1_vol[DVSARMREG(j)]);
+
+		}
+	}
+
+	if (gpio_is_valid(pdata->buck2_set3)) {
+
+		/* Calculate buck2 vol1 and vol2 register value for specified voltage */
+		i = 0;
+		while (buck12_voltage_map_desc.min +
+		       buck12_voltage_map_desc.step*i
+		       < (pdata->buck2_voltage1 / 1000))
+			i++;
+		max8998->buck2_vol[0] = i;
+		i = 0;
+		while (buck12_voltage_map_desc.min +
+		       buck12_voltage_map_desc.step*i
+		       < (pdata->buck2_voltage2 / 1000))
+			i++;
+		printk(KERN_ERR "i2:%d, buck2_idx:%d\n", i, max8998->buck2_idx);
+		max8998->buck2_vol[1] = i;
+
+		/* Reset pmic registers with default voltage */
+		ret = max8998_write_reg(i2c,
+			max8998->buck2_idx ? MAX8998_REG_BUCK2_VOLTAGE2 : MAX8998_REG_BUCK2_VOLTAGE1,
+			max8998->buck2_vol[max8998->buck2_idx]);
+		if (ret)
+			goto err_free_mem;
+
+		/* Check if SET3 is not equal to 0 and set default gpio */
+		if (!pdata->buck2_set3) {
+			printk(KERN_ERR "MAX8998 SET3 GPIO defined as 0 !\n");
+			WARN_ON(!pdata->buck2_set3);
+			ret = -EIO;
+			goto err_free_mem;
+		}
+		gpio_request(pdata->buck2_set3, "MAX8998 BUCK2_SET3");
+		gpio_direction_output(pdata->buck2_set3,
+				      max8998->buck2_idx & 0x1);
+
+
+		/* Set BUCK2 pmic register with predefined value */
+		if (max8998->buck2_idx) {
+			ret = max8998_write_reg(i2c, MAX8998_REG_BUCK2_VOLTAGE1, max8998->buck2_vol[0]);
+			if (ret)
+				goto err_free_mem;
+		} else {
+			ret = max8998_write_reg(i2c, MAX8998_REG_BUCK2_VOLTAGE2, max8998->buck2_vol[1]);
+			if (ret)
+				goto err_free_mem;
+		}
+
+	}
 
 	for (i = 0; i < pdata->num_regulators; i++) {
 		const struct voltage_map_desc *desc;
@@ -717,77 +960,13 @@ static __devinit int max8998_pmic_probe(struct platform_device *pdev)
 		}
 	}
 
-	ret = max8998_read_reg(max8998->iodev, MAX8998_REG_ONOFF4, &val);
-
-	if (ret) {
-		dev_err(pdev->dev.parent,
-			"Error reading MAX8998_REG_ONOFF4\n");
-		goto err;
-	}
-
-	max8998->en_ramp = !!(val & (1 << 4));
-	max8998->ramp = val & 0xf;
-
-	/*
-	 * Program BUCK1,2 preloads in reverse order, which must be decreasing
-	 * in voltage.  Select the highest voltage as the one to run at for
-	 * now, until power management software takes over.  The highest
-	 * voltages preloaded must be consistent with the CPU speed at which
-	 * bootup is run.
-	 */
-
-	for (i = MAX8998_N_DVSARM_REGS - 1; i >= 0; i--) {
-		if (!pdata->buck1_preload[i])
-			continue;
-
-		val = (pdata->buck1_preload[i] / 1000 -
-		       buck12_voltage_map_desc.min) /
-			buck12_voltage_map_desc.step;
-		if (max8998_write_reg(max8998->iodev,
-				      MAX8998_REG_BUCK1_DVSARM1 + DVSARMREG(i),
-				      val)) {
-			dev_err(pdev->dev.parent,
-				"Error writing MAX8998_REG_BUCK1_DVSARM%d\n",
-				DVSARMREG(i)+1);
-			continue;
-		}
-
-		max8998->dvsarm[DVSARMREG(i)] = val;
-
-		if (i == MAX8998_N_DVSARM_REGS - 1) {
-			gpio_set_value(max8998->set1_gpio, DVSARMREG(i) & 0x1);
-			gpio_set_value(max8998->set2_gpio, DVSARMREG(i) & 0x2);
-		}
-	}
-
-	for (i = MAX8998_N_DVSINT_REGS - 1; i >= 0; i--) {
-		if (!pdata->buck2_preload[i])
-			continue;
-
-		val = (pdata->buck2_preload[i] / 1000 -
-			  buck12_voltage_map_desc.min) /
-			buck12_voltage_map_desc.step;
-
-		if (max8998_write_reg(max8998->iodev,
-				      MAX8998_REG_BUCK2_DVSINT1 + i, val)) {
-			dev_err(pdev->dev.parent,
-				"Error writing MAX8998_REG_BUCK2_DVSINT%d\n",
-				i+1);
-			continue;
-		}
-
-		max8998->dvsint[i] = val;
-
-		if (i == MAX8998_N_DVSINT_REGS - 1)
-			gpio_set_value(max8998->set3_gpio, i);
-	}
 
 	return 0;
 err:
 	for (i = 0; i < max8998->num_regulators; i++)
 		if (rdev[i])
 			regulator_unregister(rdev[i]);
-
+err_free_mem:
 	kfree(max8998->rdev);
 	kfree(max8998);
 
@@ -810,6 +989,13 @@ static int __devexit max8998_pmic_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static const struct platform_device_id max8998_pmic_id[] = {
+	{ "max8998-pmic", TYPE_MAX8998 },
+	{ "lp3974-pmic", TYPE_LP3974 },
+	{ }
+};
+MODULE_DEVICE_TABLE(platform, max8998_pmic_id);
+
 static struct platform_driver max8998_pmic_driver = {
 	.driver = {
 		.name = "max8998-pmic",
@@ -817,6 +1003,7 @@ static struct platform_driver max8998_pmic_driver = {
 	},
 	.probe = max8998_pmic_probe,
 	.remove = __devexit_p(max8998_pmic_remove),
+	.id_table = max8998_pmic_id,
 };
 
 static int __init max8998_pmic_init(void)

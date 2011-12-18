@@ -57,9 +57,9 @@
 
 #ifdef CONFIG_ANDROID_PMEM
 #include <linux/android_pmem.h>
+#endif
 #include <plat/media.h>
 #include <mach/media.h>
-#endif
 
 #ifdef CONFIG_S5PV210_POWER_DOMAIN
 #include <mach/power-domain.h>
@@ -77,6 +77,7 @@
 #include <plat/mfc.h>
 #include <plat/iic.h>
 #include <plat/pm.h>
+#include <plat/s5p-time.h>
 
 #include <plat/sdhci.h>
 #include <plat/fimc.h>
@@ -133,7 +134,6 @@ static int herring_notifier_call(struct notifier_block *this,
 					unsigned long code, void *_cmd)
 {
 	int mode = REBOOT_MODE_NONE;
-	unsigned int temp;
 
 	if ((code == SYS_RESTART) && _cmd) {
 		if (!strcmp((char *)_cmd, "recovery"))
@@ -372,7 +372,9 @@ static struct s3cfb_lcd r61408 = {
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1 (36864 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMD (S5PV210_LCD_WIDTH * \
 					     S5PV210_LCD_HEIGHT * 4 * \
-					     CONFIG_FB_S3C_NR_BUFFERS)
+					     (CONFIG_FB_S3C_NR_BUFFERS + \
+						 (CONFIG_FB_S3C_NUM_OVLY_WIN * \
+						  CONFIG_FB_S3C_NUM_BUF_OVLY_WIN)))
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_JPEG (8192 * SZ_1K)
 
 static struct s5p_media_device herring_media_devs[] = {
@@ -1095,11 +1097,17 @@ static struct max8998_platform_data max8998_pdata = {
 	.regulators     = herring_regulators,
 	.charger        = &herring_charger,
 	/* Preloads must be in increasing order of voltage value */
-	.buck1_preload	= {950000, 1050000, 1200000, 1275000},
-	.buck2_preload	= {1000000, 1100000},
-	.set1_gpio	= GPIO_BUCK_1_EN_A,
-	.set2_gpio	= GPIO_BUCK_1_EN_B,
-	.set3_gpio	= GPIO_BUCK_2_EN,
+	.buck1_voltage4	= 950000,
+	.buck1_voltage3	= 1050000,
+	.buck1_voltage2	= 1200000,
+	.buck1_voltage1	= 1275000,
+	.buck2_voltage2	= 1000000,
+	.buck2_voltage1	= 1100000,
+	.buck1_set1	= GPIO_BUCK_1_EN_A,
+	.buck1_set2	= GPIO_BUCK_1_EN_B,
+	.buck2_set3	= GPIO_BUCK_2_EN,
+	.buck1_default_idx = 1,
+	.buck2_default_idx = 0,
 };
 
 struct platform_device sec_device_dpram = {
@@ -1403,7 +1411,7 @@ static struct platform_device s3c_device_spi_gpio = {
 	},
 };
 
-static  struct  i2c_gpio_platform_data  i2c4_platdata = {
+static struct i2c_gpio_platform_data herring_i2c4_platdata = {
 	.sda_pin		= GPIO_AP_SDA_18V,
 	.scl_pin		= GPIO_AP_SCL_18V,
 	.udelay			= 2,    /* 250KHz */
@@ -1412,13 +1420,13 @@ static  struct  i2c_gpio_platform_data  i2c4_platdata = {
 	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c4 = {
+static struct platform_device herring_i2c4_device = {
 	.name			= "i2c-gpio",
 	.id			= 4,
-	.dev.platform_data	= &i2c4_platdata,
+	.dev.platform_data	= &herring_i2c4_platdata,
 };
 
-static  struct  i2c_gpio_platform_data  i2c5_platdata = {
+static struct i2c_gpio_platform_data herring_i2c5_platdata = {
 	.sda_pin		= GPIO_AP_SDA_28V,
 	.scl_pin		= GPIO_AP_SCL_28V,
 	.udelay			= 2,    /* 250KHz */
@@ -1427,143 +1435,142 @@ static  struct  i2c_gpio_platform_data  i2c5_platdata = {
 	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c5 = {
+static struct platform_device herring_i2c5_device = {
 	.name			= "i2c-gpio",
 	.id			= 5,
-	.dev.platform_data	= &i2c5_platdata,
+	.dev.platform_data	= &herring_i2c5_platdata,
 };
 
-static struct i2c_gpio_platform_data i2c6_platdata = {
-	.sda_pin                = GPIO_AP_PMIC_SDA,
-	.scl_pin                = GPIO_AP_PMIC_SCL,
-	.udelay                 = 2,    /* 250KHz */
-	.sda_is_open_drain      = 0,
-	.scl_is_open_drain      = 0,
-	.scl_is_output_only     = 0,
+static struct i2c_gpio_platform_data herring_i2c6_platdata = {
+	.sda_pin		= GPIO_AP_PMIC_SDA,
+	.scl_pin		= GPIO_AP_PMIC_SCL,
+	.udelay			= 2,    /* 250KHz */
+	.sda_is_open_drain	= 0,
+	.scl_is_open_drain	= 0,
+	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c6 = {
+static struct platform_device herring_i2c6_device = {
 	.name			= "i2c-gpio",
 	.id			= 6,
-	.dev.platform_data      = &i2c6_platdata,
+	.dev.platform_data	= &herring_i2c6_platdata,
 };
 
-static  struct  i2c_gpio_platform_data  i2c7_platdata = {
-	.sda_pin                = GPIO_USB_SDA_28V,
-	.scl_pin                = GPIO_USB_SCL_28V,
-	.udelay                 = 2,    /* 250KHz */
-	.sda_is_open_drain      = 0,
-	.scl_is_open_drain      = 0,
-	.scl_is_output_only     = 0,
+static struct i2c_gpio_platform_data herring_i2c7_platdata = {
+	.sda_pin		= GPIO_USB_SDA_28V,
+	.scl_pin		= GPIO_USB_SCL_28V,
+	.udelay			= 2,    /* 250KHz */
+	.sda_is_open_drain	= 0,
+	.scl_is_open_drain	= 0,
+	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c7 = {
+static struct platform_device herring_i2c7_device = {
 	.name			= "i2c-gpio",
 	.id			= 7,
-	.dev.platform_data      = &i2c7_platdata,
+	.dev.platform_data	= &herring_i2c7_platdata,
 };
 
-static  struct  i2c_gpio_platform_data  i2c8_platdata = {
-	.sda_pin                = GYRO_SDA_28V,
-	.scl_pin                = GYRO_SCL_28V,
-	.udelay                 = 2,    /* 250KHz */
-	.sda_is_open_drain      = 0,
-	.scl_is_open_drain      = 0,
-	.scl_is_output_only     = 0,
+static struct i2c_gpio_platform_data herring_i2c8_platdata = {
+	.sda_pin		= GYRO_SDA_28V,
+	.scl_pin		= GYRO_SCL_28V,
+	.udelay			= 2,    /* 250KHz */
+	.sda_is_open_drain	= 0,
+	.scl_is_open_drain	= 0,
+	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c8 = {
+static struct platform_device herring_i2c8_device = {
 	.name			= "i2c-gpio",
 	.id			= 8,
-	.dev.platform_data      = &i2c8_platdata,
+	.dev.platform_data	= &herring_i2c8_platdata,
 };
 
-
-static  struct  i2c_gpio_platform_data  i2c9_platdata = {
-	.sda_pin                = FUEL_SDA_18V,
-	.scl_pin                = FUEL_SCL_18V,
-	.udelay                 = 2,    /* 250KHz */
-	.sda_is_open_drain      = 0,
-	.scl_is_open_drain      = 0,
-	.scl_is_output_only     = 0,
+static struct i2c_gpio_platform_data herring_i2c9_platdata = {
+	.sda_pin		= FUEL_SDA_18V,
+	.scl_pin		= FUEL_SCL_18V,
+	.udelay			= 2,    /* 250KHz */
+	.sda_is_open_drain	= 0,
+	.scl_is_open_drain	= 0,
+	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c9 = {
+static struct platform_device herring_i2c9_device = {
 	.name			= "i2c-gpio",
 	.id			= 9,
-	.dev.platform_data	= &i2c9_platdata,
+	.dev.platform_data	= &herring_i2c9_platdata,
 };
 
-static  struct  i2c_gpio_platform_data  i2c10_platdata = {
-	.sda_pin                = _3_TOUCH_SDA_28V,
-	.scl_pin                = _3_TOUCH_SCL_28V,
-	.udelay                 = 0,    /* 250KHz */
-	.sda_is_open_drain      = 0,
-	.scl_is_open_drain      = 0,
-	.scl_is_output_only     = 0,
+static struct i2c_gpio_platform_data herring_i2c10_platdata = {
+	.sda_pin		= _3_TOUCH_SDA_28V,
+	.scl_pin		= _3_TOUCH_SCL_28V,
+	.udelay			= 0,    /* 250KHz */
+	.sda_is_open_drain	= 0,
+	.scl_is_open_drain	= 0,
+	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c10 = {
+static struct platform_device herring_i2c10_device = {
 	.name			= "i2c-gpio",
 	.id			= 10,
-	.dev.platform_data	= &i2c10_platdata,
+	.dev.platform_data	= &herring_i2c10_platdata,
 };
 
-static  struct  i2c_gpio_platform_data  i2c11_platdata = {
-	.sda_pin                = GPIO_ALS_SDA_28V,
-	.scl_pin                = GPIO_ALS_SCL_28V,
-	.udelay                 = 2,    /* 250KHz */
-	.sda_is_open_drain      = 0,
-	.scl_is_open_drain      = 0,
-	.scl_is_output_only     = 0,
+static struct i2c_gpio_platform_data herring_i2c11_platdata = {
+	.sda_pin		= GPIO_ALS_SDA_28V,
+	.scl_pin		= GPIO_ALS_SCL_28V,
+	.udelay			= 2,    /* 250KHz */
+	.sda_is_open_drain	= 0,
+	.scl_is_open_drain	= 0,
+	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c11 = {
+static struct platform_device herring_i2c11_device = {
 	.name			= "i2c-gpio",
 	.id			= 11,
-	.dev.platform_data	= &i2c11_platdata,
+	.dev.platform_data	= &herring_i2c11_platdata,
 };
 
-static  struct  i2c_gpio_platform_data  i2c12_platdata = {
-	.sda_pin                = GPIO_MSENSE_SDA_28V,
-	.scl_pin                = GPIO_MSENSE_SCL_28V,
-	.udelay                 = 0,    /* 250KHz */
-	.sda_is_open_drain      = 0,
-	.scl_is_open_drain      = 0,
-	.scl_is_output_only     = 0,
+static struct i2c_gpio_platform_data herring_i2c12_platdata = {
+	.sda_pin		= GPIO_MSENSE_SDA_28V,
+	.scl_pin		= GPIO_MSENSE_SCL_28V,
+	.udelay			= 0,    /* 250KHz */
+	.sda_is_open_drain	= 0,
+	.scl_is_open_drain	= 0,
+	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c12 = {
+static struct platform_device herring_i2c12_device = {
 	.name			= "i2c-gpio",
 	.id			= 12,
-	.dev.platform_data	= &i2c12_platdata,
+	.dev.platform_data	= &herring_i2c12_platdata,
 };
 
-static struct i2c_gpio_platform_data i2c14_platdata = {
+static struct i2c_gpio_platform_data herring_i2c14_platdata = {
 	.sda_pin		= NFC_SDA_18V,
 	.scl_pin		= NFC_SCL_18V,
-	.udelay			= 1,
-	.sda_is_open_drain      = 0,
-	.scl_is_open_drain      = 0,
-	.scl_is_output_only     = 0,
+	.udelay			= 2,
+	.sda_is_open_drain	= 0,
+	.scl_is_open_drain	= 0,
+	.scl_is_output_only	= 0,
 };
 
-static struct platform_device s3c_device_i2c14 = {
+static struct platform_device herring_i2c14_device = {
 	.name			= "i2c-gpio",
 	.id			= 14,
-	.dev.platform_data	= &i2c14_platdata,
+	.dev.platform_data	= &herring_i2c14_platdata,
 };
 
 /* max8893 wimax PMIC */
-static struct i2c_gpio_platform_data i2c15_platdata = {
+static struct i2c_gpio_platform_data herring_i2c15_platdata = {
 	.sda_pin		= GPIO_WIMAX_PM_SDA,
 	.scl_pin		= GPIO_WIMAX_PM_SCL,
 };
 
-static struct platform_device s3c_device_i2c15 = {
+static struct platform_device herring_i2c15_device = {
 	.name			= "i2c-gpio",
 	.id			= 15,
-	.dev.platform_data	= &i2c15_platdata,
+	.dev.platform_data	= &herring_i2c15_platdata,
 };
 
 static struct regulator_init_data herring_max8893_buck_data = {
@@ -1704,6 +1711,7 @@ static int wimax_sdio_en(int onoff)
 		s3c_gpio_cfgpin(sdio,
 			S3C_GPIO_SFN(wimax_gpio_table[i][1]));
 		s3c_gpio_setpull(sdio, wimax_gpio_table[i][3]);
+		s3c_gpio_set_drvstrength(sdio, S3C_GPIO_DRVSTR_2X);
 
 		if (wimax_gpio_table[i][2] != GPIO_LEVEL_NONE)
 			gpio_set_value(sdio, wimax_gpio_table[i][2]);
@@ -1788,6 +1796,7 @@ void wimax_init_gpios(void)
 
 	/* PDA Active */
 	s3c_gpio_cfgpin(GPIO_WIMAX_CON1, S3C_GPIO_OUTPUT);
+	s3c_gpio_set_drvstrength(GPIO_WIMAX_CON1, S3C_GPIO_DRVSTR_2X);
 	signal_ap_active(1);
 
 }
@@ -1882,6 +1891,8 @@ int gpio_wimax_power(int enable)
 	return WIMAX_POWER_SUCCESS;
 
 wimax_power_off:
+	/*Wait for modem to flush EEPROM data*/
+	msleep(500);
 	wimax_deinit_gpios();
 
 	pr_debug("Wimax power OFF");
@@ -1891,7 +1902,7 @@ wimax_power_off:
 		wimax_hsmmc_presence_check();
 
 	/*Not critial, just some safty margin*/
-	msleep(200);
+	msleep(300);
 	wimax_sdio_en(0);
 
 	return WIMAX_POWER_SUCCESS;
@@ -2032,7 +2043,7 @@ static struct gpio_event_direct_entry herring_keypad_key_map[] = {
 static struct gpio_event_input_info herring_keypad_key_info = {
 	.info.func = gpio_event_input_func,
 	.info.no_suspend = true,
-	.debounce_time.tv.nsec = 5 * NSEC_PER_MSEC,
+	.debounce_time.tv64 = 5 * NSEC_PER_MSEC,
 	.type = EV_KEY,
 	.keymap = herring_keypad_key_map,
 	.keymap_size = ARRAY_SIZE(herring_keypad_key_map)
@@ -2688,7 +2699,7 @@ static struct s3c_platform_camera s5ka3dfx = {
 static struct s3c_platform_fimc fimc_plat_lsi = {
 	.srclk_name	= "mout_mpll",
 	.clk_name	= "sclk_fimc",
-	.lclk_name	= "sclk_fimc_lclk",
+	.lclk_name	= "fimc",
 	.clk_rate	= 166750000,
 	.default_cam	= CAMERA_PAR_A,
 	.camera		= {
@@ -2726,7 +2737,7 @@ static struct i2c_board_info i2c_devs0[] __initdata = {
 
 static struct i2c_board_info i2c_devs4[] __initdata = {
 	{
-		I2C_BOARD_INFO("wm8994", (0x34>>1)),
+		I2C_BOARD_INFO("wm8994-samsung", (0x34>>1)),
 		.platform_data = &wm8994_pdata,
 	},
 };
@@ -3067,7 +3078,9 @@ static int gp2a_light_adc_value(void)
 static struct gp2a_platform_data gp2a_pdata = {
 	.power = gp2a_power,
 	.p_out = GPIO_PS_VOUT,
-	.light_adc_value = gp2a_light_adc_value
+	.light_adc_value = gp2a_light_adc_value,
+	.light_adc_max = 4095,
+	.light_adc_fuzz = 64,
 };
 
 static struct i2c_board_info i2c_devs11[] __initdata = {
@@ -5260,6 +5273,7 @@ static int wlan_carddetect_en(int onoff)
 	udelay(5);
 
 	sdhci_s3c_force_presence_change(&s3c_device_hsmmc3);
+	msleep(500); /* wait for carddetect */
 	return 0;
 }
 
@@ -5356,7 +5370,7 @@ static struct platform_device *herring_devices[] __initdata = {
 #ifdef CONFIG_FIQ_DEBUGGER
 	&s5pv210_device_fiqdbg_uart2,
 #endif
-	&s5pc110_device_onenand,
+	&s5p_device_onenand,
 #ifdef CONFIG_RTC_DRV_S3C
 	&s5p_device_rtc,
 #endif
@@ -5401,14 +5415,14 @@ static struct platform_device *herring_devices[] __initdata = {
 #if defined(CONFIG_S3C_DEV_I2C2)
 	&s3c_device_i2c2,
 #endif
-	&s3c_device_i2c4,
-	&s3c_device_i2c6,
-	&s3c_device_i2c7,
-	&s3c_device_i2c8,  /* gyro sensor */
-	&s3c_device_i2c9,  /* max1704x:fuel_guage */
-	&s3c_device_i2c11, /* optical sensor */
-	&s3c_device_i2c12, /* magnetic sensor */
-	&s3c_device_i2c14, /* nfc sensor */
+	&herring_i2c4_device,
+	&herring_i2c6_device,
+	&herring_i2c7_device,
+	&herring_i2c8_device,  /* gyro sensor */
+	&herring_i2c9_device,  /* max1704x:fuel_guage */
+	&herring_i2c11_device, /* optical sensor */
+	&herring_i2c12_device, /* magnetic sensor */
+	&herring_i2c14_device, /* nfc sensor */
 #ifdef CONFIG_USB_GADGET
 	&s3c_device_usbgadget,
 #endif
@@ -5436,7 +5450,7 @@ static struct platform_device *herring_devices[] __initdata = {
 #endif
 
 	&sec_device_battery,
-	&s3c_device_i2c10,
+	&herring_i2c10_device,
 
 #ifdef CONFIG_S5PV210_POWER_DOMAIN
 	&s5pv210_pd_audio,
@@ -5468,6 +5482,7 @@ static struct platform_device *herring_devices[] __initdata = {
 	&sec_device_btsleep,
 	&ram_console_device,
 	&sec_device_wifi,
+	&samsung_asoc_dma,
 };
 
 unsigned int HWREV;
@@ -5479,9 +5494,13 @@ static void __init herring_map_io(void)
 	s3c24xx_init_clocks(24000000);
 	s5pv210_gpiolib_init();
 	s3c24xx_init_uarts(herring_uartcfgs, ARRAY_SIZE(herring_uartcfgs));
-	s5p_reserve_bootmem(herring_media_devs, ARRAY_SIZE(herring_media_devs));
+#ifndef CONFIG_S5P_HIGH_RES_TIMERS
+	s5p_set_timer_source(S5P_PWM3, S5P_PWM4);
+#endif
+	s5p_reserve_bootmem(herring_media_devs,
+			ARRAY_SIZE(herring_media_devs), S5P_RANGE_MFC);
 #ifdef CONFIG_MTD_ONENAND
-	s5pc110_device_onenand.name = "s5pc110-onenand";
+	s5p_device_onenand.name = "s5pc110-onenand";
 #endif
 }
 
@@ -5496,16 +5515,13 @@ static void __init herring_fixup(struct machine_desc *desc,
 {
 	mi->bank[0].start = 0x30000000;
 	mi->bank[0].size = 80 * SZ_1M;
-	mi->bank[0].node = 0;
 
 	mi->bank[1].start = 0x40000000;
 	mi->bank[1].size = 256 * SZ_1M;
-	mi->bank[1].node = 1;
 
 	mi->bank[2].start = 0x50000000;
 	/* 1M for ram_console buffer */
 	mi->bank[2].size = 127 * SZ_1M;
-	mi->bank[2].node = 2;
 	mi->nr_banks = 3;
 
 	ram_console_start = mi->bank[2].start + mi->bank[2].size;
@@ -5629,19 +5645,17 @@ static void flush_console(void)
 
 	printk("\n");
 	pr_emerg("Restarting %s\n", linux_banner);
-	if (!try_acquire_console_sem()) {
-		release_console_sem();
+	if (!is_console_locked())
 		return;
-	}
 
 	mdelay(50);
 
 	local_irq_disable();
-	if (try_acquire_console_sem())
+	if (!console_trylock())
 		pr_emerg("flush_console: console was locked! busting!\n");
 	else
 		pr_emerg("flush_console: console was locked!\n");
-	release_console_sem();
+	console_unlock();
 }
 
 static void herring_pm_restart(char mode, const char *cmd)
@@ -5665,10 +5679,9 @@ static void __init herring_machine_init(void)
 	arm_pm_restart = herring_pm_restart;
 
 	setup_ram_console_mem();
-	s3c_usb_set_serial();
 	platform_add_devices(herring_devices, ARRAY_SIZE(herring_devices));
 	if (!herring_is_tft_dev())
-		platform_device_register(&s3c_device_i2c5);
+		platform_device_register(&herring_i2c5_device);
 
 	/* Find out S5PC110 chip version */
 	_hw_version_check();
@@ -5773,7 +5786,7 @@ static void __init herring_machine_init(void)
 
 	/* max8893 wimax PMIC */
 	if (herring_is_cdma_wimax_dev()) {
-		platform_device_register(&s3c_device_i2c15);
+		platform_device_register(&herring_i2c15_device);
 		i2c_register_board_info(15, i2c_devs15, ARRAY_SIZE(i2c_devs15));
 	}
 
@@ -5893,8 +5906,9 @@ void otg_phy_init(void)
 	writel(readl(S3C_USBOTG_PHYTUNE) | (0x1<<20),
 			S3C_USBOTG_PHYTUNE);
 
-	/* set DC level as 0xf (24%) */
-	writel(readl(S3C_USBOTG_PHYTUNE) | 0xf, S3C_USBOTG_PHYTUNE);
+	/* set DC level as 6 (6%) */
+	writel((readl(S3C_USBOTG_PHYTUNE) & ~(0xf)) | (0x1<<2) | (0x1<<1),
+			S3C_USBOTG_PHYTUNE);
 }
 EXPORT_SYMBOL(otg_phy_init);
 
@@ -5945,31 +5959,17 @@ void usb_host_phy_off(void)
 EXPORT_SYMBOL(usb_host_phy_off);
 #endif
 
-MACHINE_START(SMDKC110, "SMDKC110")
-	/* Maintainer: Kukjin Kim <kgene.kim@samsung.com> */
-	.phys_io	= S3C_PA_UART & 0xfff00000,
-	.io_pg_offst	= (((u32)S3C_VA_UART) >> 18) & 0xfffc,
+MACHINE_START(HERRING, "herring")
 	.boot_params	= S5P_PA_SDRAM + 0x100,
 	.fixup		= herring_fixup,
 	.init_irq	= s5pv210_init_irq,
 	.map_io		= herring_map_io,
 	.init_machine	= herring_machine_init,
-#if	defined(CONFIG_S5P_HIGH_RES_TIMERS)
+#ifdef CONFIG_S5P_HIGH_RES_TIMERS
 	.timer		= &s5p_systimer,
 #else
-	.timer		= &s3c24xx_timer,
+	.timer		= &s5p_timer,
 #endif
-MACHINE_END
-
-MACHINE_START(HERRING, "herring")
-	.phys_io	= S3C_PA_UART & 0xfff00000,
-	.io_pg_offst	= (((u32)S3C_VA_UART) >> 18) & 0xfffc,
-	.boot_params	= S5P_PA_SDRAM + 0x100,
-	.fixup		= herring_fixup,
-	.init_irq	= s5pv210_init_irq,
-	.map_io		= herring_map_io,
-	.init_machine	= herring_machine_init,
-	.timer		= &s5p_systimer,
 MACHINE_END
 
 void s3c_setup_uart_cfg_gpio(unsigned char port)

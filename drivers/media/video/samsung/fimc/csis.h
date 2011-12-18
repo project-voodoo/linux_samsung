@@ -13,7 +13,7 @@
 #ifndef __CSIS_H
 #define __CSIS_H __FILE__
 
-#define S3C_CSIS_NAME		"s3c-csis"
+#define S3C_CSIS_NAME		"s5p-mipi-csis"
 #define S3C_CSIS_NR_LANES	1
 
 #define info(args...)	\

@@ -62,6 +62,7 @@ static enum hrtimer_restart gpio_event_input_timer_func(struct hrtimer *timer)
 	struct gpio_key_state *key_state;
 	unsigned long irqflags;
 	uint8_t debounce;
+	bool sync_needed;
 
 #if 0
 	key_entry = kp->keys_info->keymap;
@@ -72,6 +73,7 @@ static enum hrtimer_restart gpio_event_input_timer_func(struct hrtimer *timer)
 #endif
 	key_entry = ds->info->keymap;
 	key_state = ds->key_state;
+	sync_needed = false;
 	spin_lock_irqsave(&ds->irq_lock, irqflags);
 	for (i = 0; i < nkeys; i++, key_entry++, key_state++) {
 		debounce = key_state->debounce;
@@ -80,10 +82,11 @@ static enum hrtimer_restart gpio_event_input_timer_func(struct hrtimer *timer)
 		if (key_state->debounce & DEBOUNCE_UNSTABLE) {
 			debounce = key_state->debounce = DEBOUNCE_UNKNOWN;
 			enable_irq(gpio_to_irq(key_entry->gpio));
-			pr_info("gpio_keys_scan_keys: key %x-%x, %d "
-				"(%d) continue debounce\n",
-				ds->info->type, key_entry->code,
-				i, key_entry->gpio);
+			if (gpio_flags & GPIOEDF_PRINT_KEY_UNSTABLE)
+				pr_info("gpio_keys_scan_keys: key %x-%x, %d "
+					"(%d) continue debounce\n",
+					ds->info->type, key_entry->code,
+					i, key_entry->gpio);
 		}
 		npolarity = !(gpio_flags & GPIOEDF_ACTIVE_HIGH);
 		pressed = gpio_get_value(key_entry->gpio) ^ npolarity;
@@ -129,6 +132,11 @@ static enum hrtimer_restart gpio_event_input_timer_func(struct hrtimer *timer)
 				key_entry->code, i, key_entry->gpio, pressed);
 		input_event(ds->input_devs->dev[key_entry->dev], ds->info->type,
 			    key_entry->code, pressed);
+		sync_needed = true;
+	}
+	if (sync_needed) {
+		for (i = 0; i < ds->input_devs->count; i++)
+			input_sync(ds->input_devs->dev[i]);
 	}
 
 #if 0
@@ -196,6 +204,7 @@ static irqreturn_t gpio_event_input_irq_handler(int irq, void *dev_id)
 				key_entry->gpio, pressed);
 		input_event(ds->input_devs->dev[key_entry->dev], ds->info->type,
 			    key_entry->code, pressed);
+		input_sync(ds->input_devs->dev[key_entry->dev]);
 	}
 	return IRQ_HANDLED;
 }

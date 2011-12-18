@@ -16,7 +16,6 @@
 #include <linux/completion.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-subdev.h>
-#include <media/v4l2-i2c-drv.h>
 #include <media/s5k4ecgx.h>
 #include <linux/videodev2_samsung.h>
 
@@ -91,6 +90,7 @@ enum af_operation_status {
 	AF_NONE = 0,
 	AF_START,
 	AF_CANCEL,
+	AF_INITIAL,
 };
 
 enum s5k4ecgx_oprmode {
@@ -623,7 +623,6 @@ struct s5k4ecgx_state {
 	struct v4l2_streamparm strm;
 	struct s5k4ecgx_gps_info gps_info;
 	struct mutex ctrl_lock;
-	struct completion af_complete;
 	enum s5k4ecgx_runmode runmode;
 	enum s5k4ecgx_oprmode oprmode;
 	enum af_operation_status af_status;
@@ -643,13 +642,10 @@ struct s5k4ecgx_state {
 	const struct s5k4ecgx_regs *regs;
 };
 
-static const struct v4l2_fmtdesc capture_fmts[] = {
+static const struct v4l2_mbus_framefmt capture_fmts[] = {
 	{
-		.index		= 0,
-		.type		= V4L2_BUF_TYPE_VIDEO_CAPTURE,
-		.flags		= FORMAT_FLAGS_COMPRESSED,
-		.description	= "JPEG + Postview",
-		.pixelformat	= V4L2_PIX_FMT_JPEG,
+		.code		= V4L2_MBUS_FMT_FIXED,
+		.colorspace	= V4L2_COLORSPACE_JPEG,
 	},
 };
 
@@ -965,6 +961,7 @@ static int s5k4ecgx_start_capture(struct v4l2_subdev *sd)
 	} else
 		state->restore_preview_size_needed = false;
 
+	msleep(50);
 	light_level = s5k4ecgx_get_light_level(sd);
 
 	dev_dbg(&client->dev, "%s: light_level = %d\n", __func__,
@@ -1314,10 +1311,34 @@ enable_af_low_light_mode:
 
 	s5k4ecgx_set_from_table(sd, "single af start",
 				&state->regs->single_af_start, 1, 0);
-	state->af_status = AF_START;
-	INIT_COMPLETION(state->af_complete);
+	state->af_status = AF_INITIAL;
 	dev_dbg(&client->dev, "%s: af_status set to start\n", __func__);
 
+	return 0;
+}
+
+/* called by HAL after auto focus was finished.
+ * it might off the assist flash
+ */
+static int s5k4ecgx_finish_auto_focus(struct v4l2_subdev *sd)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct s5k4ecgx_state *state =
+		container_of(sd, struct s5k4ecgx_state, sd);
+
+	/* restore write mode */
+	s5k4ecgx_i2c_write_twobyte(client, 0x0028, 0x7000);
+
+	if (state->flash_on) {
+		struct s5k4ecgx_platform_data *pd = client->dev.platform_data;
+		s5k4ecgx_set_from_table(sd, "AF assist flash end",
+				&state->regs->af_assist_flash_end, 1, 0);
+		state->flash_on = false;
+		pd->af_assist_onoff(0);
+	}
+
+	dev_dbg(&client->dev, "%s: single AF finished\n", __func__);
+	state->af_status = AF_NONE;
 	return 0;
 }
 
@@ -1340,6 +1361,8 @@ static int s5k4ecgx_stop_auto_focus(struct v4l2_subdev *sd)
 
 	s5k4ecgx_set_from_table(sd, "ae awb lock off",
 				&state->regs->ae_awb_lock_off, 1, 0);
+	if (state->flash_on)
+		s5k4ecgx_finish_auto_focus(sd);
 
 	if (state->af_status != AF_START) {
 		/* we weren't in the middle auto focus operation, we're done */
@@ -1360,7 +1383,8 @@ static int s5k4ecgx_stop_auto_focus(struct v4l2_subdev *sd)
 	}
 
 	/* auto focus was in progress.  the other thread
-	 * is either in the middle of get_auto_focus_result()
+	 * is either in the middle of s5k4ecgx_get_auto_focus_result_first(),
+	 * s5k4ecgx_get_auto_focus_result_second()
 	 * or will call it shortly.  set a flag to have
 	 * it abort it's polling.  that thread will
 	 * also do cleanup like restore focus position.
@@ -1381,145 +1405,84 @@ static int s5k4ecgx_stop_auto_focus(struct v4l2_subdev *sd)
 	s5k4ecgx_set_from_table(sd, "single af off 2",
 				&state->regs->single_af_off_2, 1, 0);
 
-	/* wait until the other thread has completed
-	 * aborting the auto focus and restored state
-	 */
-	dev_dbg(&client->dev, "%s: wait AF cancel done start\n", __func__);
-	mutex_unlock(&state->ctrl_lock);
-	wait_for_completion(&state->af_complete);
-	mutex_lock(&state->ctrl_lock);
-	dev_dbg(&client->dev, "%s: wait AF cancel done finished\n", __func__);
-
 	return 0;
 }
 
-/* called by HAL after auto focus was started to get the result.
- * it might be aborted asynchronously by a call to set_auto_focus
- */
-static int s5k4ecgx_get_auto_focus_result(struct v4l2_subdev *sd,
+/* called by HAL after auto focus was started to get the first search result*/
+static int s5k4ecgx_get_auto_focus_result_first(struct v4l2_subdev *sd,
 					struct v4l2_control *ctrl)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	struct s5k4ecgx_state *state =
 		container_of(sd, struct s5k4ecgx_state, sd);
-	int err, count;
 	u16 read_value;
 
-	dev_dbg(&client->dev, "%s: Check AF Result\n", __func__);
+	if (state->af_status == AF_INITIAL) {
+		dev_dbg(&client->dev, "%s: Check AF Result\n", __func__);
+		if (state->af_status == AF_NONE) {
+			dev_dbg(&client->dev,
+				"%s: auto focus never started, returning 0x2\n",
+				__func__);
+			ctrl->value = AUTO_FOCUS_CANCELLED;
+			return 0;
+		}
 
-	if (state->af_status == AF_NONE) {
+		/* must delay 2 frame times before checking result of 1st phase */
+		mutex_unlock(&state->ctrl_lock);
+		msleep(state->one_frame_delay_ms*2);
+		mutex_lock(&state->ctrl_lock);
+
+		/* lock AE and AWB after first AF search */
+		s5k4ecgx_set_from_table(sd, "ae awb lock on",
+					&state->regs->ae_awb_lock_on, 1, 0);
+
+		dev_dbg(&client->dev, "%s: 1st AF search\n", __func__);
+		/* enter read mode */
+		s5k4ecgx_i2c_write_twobyte(client, 0x002C, 0x7000);
+		state->af_status = AF_START;
+	} else if (state->af_status == AF_CANCEL) {
 		dev_dbg(&client->dev,
-			"%s: auto focus never started, returning 0x2\n",
-			__func__);
+			"%s: AF is cancelled while doing\n", __func__);
 		ctrl->value = AUTO_FOCUS_CANCELLED;
+		s5k4ecgx_finish_auto_focus(sd);
 		return 0;
 	}
+	s5k4ecgx_set_from_table(sd, "get 1st af search status",
+				&state->regs->get_1st_af_search_status,
+				1, 0);
+	s5k4ecgx_i2c_read_twobyte(client, 0x0F12, &read_value);
+	dev_dbg(&client->dev,
+		"%s: 1st i2c_read --- read_value == 0x%x\n",
+		__func__, read_value);
+	ctrl->value = read_value;
+	return 0;
+}
 
-	/* must delay 2 frame times before checking result of 1st phase */
-	mutex_unlock(&state->ctrl_lock);
-	msleep(state->one_frame_delay_ms*2);
-	mutex_lock(&state->ctrl_lock);
+/* called by HAL after first search was succeed to get the second search result*/
+static int s5k4ecgx_get_auto_focus_result_second(struct v4l2_subdev *sd,
+					struct v4l2_control *ctrl)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct s5k4ecgx_state *state =
+		container_of(sd, struct s5k4ecgx_state, sd);
+	u16 read_value;
 
-	/* lock AE and AWB after first AF search */
-	s5k4ecgx_set_from_table(sd, "ae awb lock on",
-				&state->regs->ae_awb_lock_on, 1, 0);
-
-	dev_dbg(&client->dev, "%s: 1st AF search\n", __func__);
-	/* enter read mode */
-	s5k4ecgx_i2c_write_twobyte(client, 0x002C, 0x7000);
-	for (count = 0; count < FIRST_AF_SEARCH_COUNT; count++) {
-		if (state->af_status == AF_CANCEL) {
-			dev_dbg(&client->dev,
-				"%s: AF is cancelled while doing\n", __func__);
-			ctrl->value = AUTO_FOCUS_CANCELLED;
-			goto check_flash;
-		}
-		s5k4ecgx_set_from_table(sd, "get 1st af search status",
-					&state->regs->get_1st_af_search_status,
-					1, 0);
-		s5k4ecgx_i2c_read_twobyte(client, 0x0F12, &read_value);
+	if (state->af_status == AF_CANCEL) {
 		dev_dbg(&client->dev,
-			"%s: 1st i2c_read --- read_value == 0x%x\n",
-			__func__, read_value);
-
-		/* check for success and failure cases.  0x1 is
-		 * auto focus still in progress.  0x2 is success.
-		 * 0x0,0x3,0x4,0x6,0x8 are all failures cases
-		 */
-		if (read_value != 0x01)
-			break;
-		mutex_unlock(&state->ctrl_lock);
-		msleep(50);
-		mutex_lock(&state->ctrl_lock);
+			"%s: AF is cancelled while doing\n", __func__);
+		ctrl->value = AUTO_FOCUS_CANCELLED;
+		s5k4ecgx_finish_auto_focus(sd);
+		return 0;
 	}
-
-	if ((count >= FIRST_AF_SEARCH_COUNT) || (read_value != 0x02)) {
-		dev_dbg(&client->dev,
-			"%s: 1st scan timed out or failed\n", __func__);
-		ctrl->value = AUTO_FOCUS_FAILED;
-		goto check_flash;
-	}
-
-	dev_dbg(&client->dev, "%s: 2nd AF search\n", __func__);
-
-	/* delay 1 frame time before checking for 2nd AF completion */
-	mutex_unlock(&state->ctrl_lock);
-	msleep(state->one_frame_delay_ms);
-	mutex_lock(&state->ctrl_lock);
-
-	/* this is the long portion of AF, can take a second or more.
-	 * we poll and wakeup more frequently than 1 second mainly
-	 * to see if a cancel was requested
-	 */
-	for (count = 0; count < SECOND_AF_SEARCH_COUNT; count++) {
-		if (state->af_status == AF_CANCEL) {
-			dev_dbg(&client->dev,
-				"%s: AF is cancelled while doing\n", __func__);
-			ctrl->value = AUTO_FOCUS_CANCELLED;
-			goto check_flash;
-		}
-		s5k4ecgx_set_from_table(sd, "get 2nd af search status",
-					&state->regs->get_2nd_af_search_status,
-					1, 0);
-		s5k4ecgx_i2c_read_twobyte(client, 0x0F12, &read_value);
-		dev_dbg(&client->dev,
-			"%s: 2nd i2c_read --- read_value == 0x%x\n",
-			__func__, read_value);
-
-		/* low byte is garbage.  done when high byte is 0x0 */
-		if (!(read_value & 0xff00))
-			break;
-
-		mutex_unlock(&state->ctrl_lock);
-		msleep(50);
-		mutex_lock(&state->ctrl_lock);
-	}
-
-	if (count >= SECOND_AF_SEARCH_COUNT) {
-		dev_dbg(&client->dev, "%s: 2nd scan timed out\n", __func__);
-		ctrl->value = AUTO_FOCUS_FAILED;
-		goto check_flash;
-	}
-
-	dev_dbg(&client->dev, "%s: AF is success\n", __func__);
-	ctrl->value = AUTO_FOCUS_DONE;
-
-check_flash:
-	/* restore write mode */
-	s5k4ecgx_i2c_write_twobyte(client, 0x0028, 0x7000);
-
-	if (state->flash_on) {
-		struct s5k4ecgx_platform_data *pd = client->dev.platform_data;
-		s5k4ecgx_set_from_table(sd, "AF assist flash end",
-				&state->regs->af_assist_flash_end, 1, 0);
-		state->flash_on = false;
-		pd->af_assist_onoff(0);
-	}
-
-	dev_dbg(&client->dev, "%s: single AF finished\n", __func__);
-	state->af_status = AF_NONE;
-	complete(&state->af_complete);
-	return err;
+	s5k4ecgx_set_from_table(sd, "get 2nd af search status",
+				&state->regs->get_2nd_af_search_status,
+				1, 0);
+	s5k4ecgx_i2c_read_twobyte(client, 0x0F12, &read_value);
+	dev_dbg(&client->dev,
+		"%s: 2nd i2c_read --- read_value == 0x%x\n",
+		__func__, read_value);
+	ctrl->value = read_value;
+	return 0;
 }
 
 static void s5k4ecgx_init_parameters(struct v4l2_subdev *sd)
@@ -1561,35 +1524,34 @@ static void s5k4ecgx_init_parameters(struct v4l2_subdev *sd)
 static void s5k4ecgx_set_framesize(struct v4l2_subdev *sd,
 				const struct s5k4ecgx_framesize *frmsize,
 				int frmsize_count, bool exact_match);
-static int s5k4ecgx_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
+static int s5k4ecgx_s_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *fmt)
 {
 	struct s5k4ecgx_state *state =
 		container_of(sd, struct s5k4ecgx_state, sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	dev_dbg(&client->dev, "%s: pixelformat = 0x%x (%c%c%c%c),"
+	dev_dbg(&client->dev, "%s: code = 0x%x, field = 0x%x,"
 		" colorspace = 0x%x, width = %d, height = %d\n",
-		__func__, fmt->fmt.pix.pixelformat,
-		fmt->fmt.pix.pixelformat,
-		fmt->fmt.pix.pixelformat >> 8,
-		fmt->fmt.pix.pixelformat >> 16,
-		fmt->fmt.pix.pixelformat >> 24,
-		fmt->fmt.pix.colorspace,
-		fmt->fmt.pix.width, fmt->fmt.pix.height);
+		__func__, fmt->code, fmt->field,
+		fmt->colorspace,
+		fmt->width, fmt->height);
 
-	if (fmt->fmt.pix.pixelformat == V4L2_PIX_FMT_JPEG &&
-		fmt->fmt.pix.colorspace != V4L2_COLORSPACE_JPEG) {
+	if (fmt->code == V4L2_MBUS_FMT_FIXED &&
+		fmt->colorspace != V4L2_COLORSPACE_JPEG) {
 		dev_err(&client->dev,
 			"%s: mismatch in pixelformat and colorspace\n",
 			__func__);
 		return -EINVAL;
 	}
 
-	state->pix.width = fmt->fmt.pix.width;
-	state->pix.height = fmt->fmt.pix.height;
-	state->pix.pixelformat = fmt->fmt.pix.pixelformat;
+	state->pix.width = fmt->width;
+	state->pix.height = fmt->height;
+	if (fmt->colorspace == V4L2_COLORSPACE_JPEG)
+		state->pix.pixelformat = V4L2_PIX_FMT_JPEG;
+	else
+		state->pix.pixelformat = 0; /* is this used anywhere? */
 
-	if (fmt->fmt.pix.colorspace == V4L2_COLORSPACE_JPEG) {
+	if (fmt->colorspace == V4L2_COLORSPACE_JPEG) {
 		state->oprmode = S5K4ECGX_OPRMODE_IMAGE;
 		/*
 		 * In case of image capture mode,
@@ -1634,36 +1596,32 @@ static int s5k4ecgx_enum_framesizes(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int s5k4ecgx_enum_fmt(struct v4l2_subdev *sd,
-			struct v4l2_fmtdesc *fmtdesc)
+static int s5k4ecgx_enum_mbus_fmt(struct v4l2_subdev *sd, unsigned int index,
+				  enum v4l2_mbus_pixelcode *code)
 {
-	pr_debug("%s: index = %d\n", __func__, fmtdesc->index);
+	pr_debug("%s: index = %d\n", __func__, index);
 
-	if (fmtdesc->index >= ARRAY_SIZE(capture_fmts))
+	if (index >= ARRAY_SIZE(capture_fmts))
 		return -EINVAL;
 
-	memcpy(fmtdesc, &capture_fmts[fmtdesc->index], sizeof(*fmtdesc));
+	*code = capture_fmts[index].code;
 
 	return 0;
 }
 
-static int s5k4ecgx_try_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
+static int s5k4ecgx_try_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *fmt)
 {
 	int num_entries;
 	int i;
 
 	num_entries = ARRAY_SIZE(capture_fmts);
 
-	pr_debug("%s: pixelformat = 0x%x (%c%c%c%c), num_entries = %d\n",
-		__func__, fmt->fmt.pix.pixelformat,
-		fmt->fmt.pix.pixelformat,
-		fmt->fmt.pix.pixelformat >> 8,
-		fmt->fmt.pix.pixelformat >> 16,
-		fmt->fmt.pix.pixelformat >> 24,
-		num_entries);
+	pr_debug("%s: code = 0x%x, colorspace = 0x%x, num_entries = %d\n",
+		__func__, fmt->code, fmt->colorspace, num_entries);
 
 	for (i = 0; i < num_entries; i++) {
-		if (capture_fmts[i].pixelformat == fmt->fmt.pix.pixelformat) {
+		if (capture_fmts[i].code == fmt->code &&
+		    capture_fmts[i].colorspace == fmt->colorspace) {
 			pr_debug("%s: match found, returning 0\n", __func__);
 			return 0;
 		}
@@ -1795,6 +1753,11 @@ static int s5k4ecgx_s_parm(struct v4l2_subdev *sd,
 				new_parms->brightness, "brightness",
 				state->regs->ev, ARRAY_SIZE(state->regs->ev));
 	err |= s5k4ecgx_set_flash_mode(sd, new_parms->flash_mode);
+	/* Must delay 150ms before setting macro mode due to a camera
+	 * sensor requirement */
+	if ((new_parms->focus_mode == FOCUS_MODE_MACRO) &&
+			(parms->focus_mode != FOCUS_MODE_MACRO))
+		msleep(150);
 	err |= s5k4ecgx_set_focus_mode(sd, new_parms->focus_mode);
 	err |= s5k4ecgx_set_parameter(sd, &parms->iso, new_parms->iso,
 				"iso", state->regs->iso,
@@ -2085,8 +2048,11 @@ static int s5k4ecgx_g_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	case V4L2_CID_CAM_JPEG_QUALITY:
 		ctrl->value = state->jpeg.quality;
 		break;
-	case V4L2_CID_CAMERA_AUTO_FOCUS_RESULT:
-		err = s5k4ecgx_get_auto_focus_result(sd, ctrl);
+	case V4L2_CID_CAMERA_AUTO_FOCUS_RESULT_FIRST:
+		err = s5k4ecgx_get_auto_focus_result_first(sd, ctrl);
+		break;
+	case V4L2_CID_CAMERA_AUTO_FOCUS_RESULT_SECOND:
+		err = s5k4ecgx_get_auto_focus_result_second(sd, ctrl);
 		break;
 	case V4L2_CID_CAM_DATE_INFO_YEAR:
 		ctrl->value = 2010;
@@ -2371,6 +2337,9 @@ static int s5k4ecgx_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	case V4L2_CID_CAMERA_RETURN_FOCUS:
 		if (parms->focus_mode != FOCUS_MODE_MACRO)
 			err = s5k4ecgx_return_focus(sd);
+		break;
+	case V4L2_CID_CAMERA_FINISH_AUTO_FOCUS:
+		err = s5k4ecgx_finish_auto_focus(sd);
 		break;
 	default:
 		dev_err(&client->dev, "%s: unknown set ctrl id 0x%x\n",
@@ -2745,56 +2714,18 @@ static int s5k4ecgx_init(struct v4l2_subdev *sd, u32 val)
 	return 0;
 }
 
-/*
- * s_config subdev ops
- * With camera device, we need to re-initialize
- * every single opening time therefor,
- * it is not necessary to be initialized on probe time.
- * except for version checking
- * NOTE: version checking is optional
- */
-static int s5k4ecgx_s_config(struct v4l2_subdev *sd,
-			int irq, void *platform_data)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct s5k4ecgx_state *state =
-		container_of(sd, struct s5k4ecgx_state, sd);
-	struct s5k4ecgx_platform_data *pdata = client->dev.platform_data;
-
-	/*
-	 * Assign default format and resolution
-	 * Use configured default information in platform data
-	 * or without them, use default information in driver
-	 */
-	state->pix.width = pdata->default_width;
-	state->pix.height = pdata->default_height;
-
-	if (!pdata->pixelformat)
-		state->pix.pixelformat = DEFAULT_PIX_FMT;
-	else
-		state->pix.pixelformat = pdata->pixelformat;
-
-	if (!pdata->freq)
-		state->freq = DEFAULT_MCLK;	/* 24MHz default */
-	else
-		state->freq = pdata->freq;
-
-	return 0;
-}
-
 static const struct v4l2_subdev_core_ops s5k4ecgx_core_ops = {
 	.init = s5k4ecgx_init,	/* initializing API */
-	.s_config = s5k4ecgx_s_config,	/* Fetch platform data */
 	.g_ctrl = s5k4ecgx_g_ctrl,
 	.s_ctrl = s5k4ecgx_s_ctrl,
 	.s_ext_ctrls = s5k4ecgx_s_ext_ctrls,
 };
 
 static const struct v4l2_subdev_video_ops s5k4ecgx_video_ops = {
-	.s_fmt = s5k4ecgx_s_fmt,
+	.s_mbus_fmt = s5k4ecgx_s_mbus_fmt,
 	.enum_framesizes = s5k4ecgx_enum_framesizes,
-	.enum_fmt = s5k4ecgx_enum_fmt,
-	.try_fmt = s5k4ecgx_try_fmt,
+	.enum_mbus_fmt = s5k4ecgx_enum_mbus_fmt,
+	.try_mbus_fmt = s5k4ecgx_try_mbus_fmt,
 	.g_parm = s5k4ecgx_g_parm,
 	.s_parm = s5k4ecgx_s_parm,
 };
@@ -2827,11 +2758,28 @@ static int s5k4ecgx_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	mutex_init(&state->ctrl_lock);
-	init_completion(&state->af_complete);
 
 	state->runmode = S5K4ECGX_RUNMODE_NOTREADY;
 	sd = &state->sd;
 	strcpy(sd->name, S5K4ECGX_DRIVER_NAME);
+
+	/*
+	 * Assign default format and resolution
+	 * Use configured default information in platform data
+	 * or without them, use default information in driver
+	 */
+	state->pix.width = pdata->default_width;
+	state->pix.height = pdata->default_height;
+
+	if (!pdata->pixelformat)
+		state->pix.pixelformat = DEFAULT_PIX_FMT;
+	else
+		state->pix.pixelformat = pdata->pixelformat;
+
+	if (!pdata->freq)
+		state->freq = DEFAULT_MCLK;	/* 24MHz default */
+	else
+		state->freq = pdata->freq;
 
 	/* Registering subdev */
 	v4l2_i2c_subdev_init(sd, client, &s5k4ecgx_ops);
@@ -2863,16 +2811,27 @@ static const struct i2c_device_id s5k4ecgx_id[] = {
 
 MODULE_DEVICE_TABLE(i2c, s5k4ecgx_id);
 
-static struct v4l2_i2c_driver_data v4l2_i2c_data = {
-	.name = S5K4ECGX_DRIVER_NAME,
+static struct i2c_driver v4l2_i2c_driver = {
+	.driver.name = S5K4ECGX_DRIVER_NAME,
 	.probe = s5k4ecgx_probe,
 	.remove = s5k4ecgx_remove,
 	.id_table = s5k4ecgx_id,
 };
 
+static int __init v4l2_i2c_drv_init(void)
+{
+	return i2c_add_driver(&v4l2_i2c_driver);
+}
+
+static void __exit v4l2_i2c_drv_cleanup(void)
+{
+	i2c_del_driver(&v4l2_i2c_driver);
+}
+
+module_init(v4l2_i2c_drv_init);
+module_exit(v4l2_i2c_drv_cleanup);
+
 MODULE_DESCRIPTION("LSI S5K4ECGX 5MP SOC camera driver");
 MODULE_AUTHOR("Seok-Young Jang <quartz.jang@samsung.com>");
 MODULE_LICENSE("GPL");
-
-
 
