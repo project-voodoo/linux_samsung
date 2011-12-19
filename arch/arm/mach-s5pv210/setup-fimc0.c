@@ -78,7 +78,7 @@ int s3c_fimc_clk_on(struct platform_device *pdev, struct clk *clk)
 		goto err_clk2;
 	}
 
-	sclk_fimc_lclk = clk_get(&pdev->dev, "sclk_fimc_lclk");
+	sclk_fimc_lclk = clk_get(&pdev->dev, "fimc");
 	if (IS_ERR(sclk_fimc_lclk)) {
 		dev_err(&pdev->dev, "failed to get sclk_fimc_lclk\n");
 		goto err_clk3;

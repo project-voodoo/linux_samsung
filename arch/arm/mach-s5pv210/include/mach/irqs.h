@@ -52,7 +52,7 @@
 
 /* VIC1: ARM, Power, Memory, Connectivity, Storage */
 
-#define IRQ_CORTEX0		S5P_IRQ_VIC1(0)
+#define IRQ_PMU			S5P_IRQ_VIC1(0)
 #define IRQ_CORTEX1		S5P_IRQ_VIC1(1)
 #define IRQ_CORTEX2		S5P_IRQ_VIC1(2)
 #define IRQ_CORTEX3		S5P_IRQ_VIC1(3)
@@ -61,7 +61,7 @@
 #define IRQ_IEMIEC		S5P_IRQ_VIC1(6)
 #define IRQ_ONENAND		S5P_IRQ_VIC1(7)
 #define IRQ_NFC			S5P_IRQ_VIC1(8)
-#define IRQ_CFC			S5P_IRQ_VIC1(9)
+#define IRQ_CFCON		S5P_IRQ_VIC1(9)
 #define IRQ_UART0		S5P_IRQ_VIC1(10)
 #define IRQ_UART1		S5P_IRQ_VIC1(11)
 #define IRQ_UART2		S5P_IRQ_VIC1(12)
@@ -72,7 +72,7 @@
 #define IRQ_SPI2		S5P_IRQ_VIC1(17)
 #define IRQ_IRDA		S5P_IRQ_VIC1(18)
 #define IRQ_IIC2		S5P_IRQ_VIC1(19)
-#define IRQ_CAN1		S5P_IRQ_VIC1(20)
+#define IRQ_IIC3		S5P_IRQ_VIC1(20)
 #define IRQ_HSIRX		S5P_IRQ_VIC1(21)
 #define IRQ_HSITX		S5P_IRQ_VIC1(22)
 #define IRQ_UHOST		S5P_IRQ_VIC1(23)
@@ -81,7 +81,7 @@
 #define IRQ_HSMMC0		S5P_IRQ_VIC1(26)
 #define IRQ_HSMMC1		S5P_IRQ_VIC1(27)
 #define IRQ_HSMMC2		S5P_IRQ_VIC1(28)
-#define IRQ_MIPICSI		S5P_IRQ_VIC1(29)
+#define IRQ_MIPI_CSIS		S5P_IRQ_VIC1(29)
 #define IRQ_MIPIDSI		S5P_IRQ_VIC1(30)
 #define IRQ_ONENAND_AUDI	S5P_IRQ_VIC1(31)
 
@@ -115,9 +115,9 @@
 #define IRQ_TC			IRQ_PENDN
 #define IRQ_KEYPAD		S5P_IRQ_VIC2(25)
 #define IRQ_CG			S5P_IRQ_VIC2(26)
-#define IRQ_SEC			S5P_IRQ_VIC2(27)
-#define IRQ_SECRX		S5P_IRQ_VIC2(28)
-#define IRQ_SECTX		S5P_IRQ_VIC2(29)
+#define IRQ_SSS_INT		S5P_IRQ_VIC2(27)
+#define IRQ_SSS_HASH		S5P_IRQ_VIC2(28)
+#define IRQ_PCM2		S5P_IRQ_VIC2(29)
 #define IRQ_SDMIRQ		S5P_IRQ_VIC2(30)
 #define IRQ_SDMFIQ		S5P_IRQ_VIC2(31)
 
@@ -125,7 +125,7 @@
 
 #define IRQ_IPC			S5P_IRQ_VIC3(0)
 #define IRQ_HOSTIF		S5P_IRQ_VIC3(1)
-#define IRQ_MMC3		S5P_IRQ_VIC3(2)
+#define IRQ_HSMMC3		S5P_IRQ_VIC3(2)
 #define IRQ_CEC			S5P_IRQ_VIC3(3)
 #define IRQ_TSI			S5P_IRQ_VIC3(4)
 #define IRQ_MDNIE0		S5P_IRQ_VIC3(5)
@@ -140,18 +140,17 @@
 #define S5P_EINT_BASE2		(IRQ_VIC_END + 1)
 #define S5P_IRQ_EINT_BASE   S5P_EINT_BASE2
 
-#define S5P_EINT(x)    ((x) + S5P_IRQ_EINT_BASE)
-
 /* GPIO interrupt */
-#define S5P_GPIOINT_GROUP_NR   22
-#define S5P_GPIOINT_BASE       (IRQ_EINT(31) + 1)
-#define S5P_IRQ_GPIOINT(x)     (S5P_GPIOINT_BASE + (x))
+#define S5P_GPIOINT_BASE	(IRQ_EINT(31) + 1)
+#define S5P_GPIOINT_GROUP_MAXNR	22
 
+#define S5P_EINT(x)    ((x) + S5P_IRQ_EINT_BASE)
 
 /* Compatibility */
 #define IRQ_LCD_FIFO		IRQ_LCD0
 #define IRQ_LCD_VSYNC		IRQ_LCD1
 #define IRQ_LCD_SYSTEM		IRQ_LCD2
+#define IRQ_MIPI_CSIS0		IRQ_MIPI_CSIS
 
 /* Next the external interrupt groups. These are similar to the IRQ_EINT(x)
  * that they are sourced from the GPIO pins but with a different scheme for
@@ -214,17 +213,9 @@
 
 #define IRQ_EINT_GROUP(group, no)	(IRQ_EINT_GROUP##group##_BASE + (no))
 
-/*
- * Set the default NR_IRQS
- * GPIO groups is 27. Each GPIO group can have max 8 GPIO interrupts.
- *
- * We should include gpios of all gpio groups from GPIO_A0 until GPIO_J4 to
- * NR_IRQS because 22 gpio groups having gpio interrupts aren't in order and
- * are mixed with no interrupt gpio groups, then it can give simple irq
- * computation of gpio interrupts.
- */
-#define NR_IRQS (S5P_IRQ_GPIOINT(27 * 8) + 1)
-
+/* Set the default NR_IRQS */
+//#define NR_IRQS			(IRQ_EINT(31) + 1)
+#define NR_IRQS		(IRQ_EINT_GROUP22_BASE + IRQ_EINT_GROUP22_NR + 1)
 
 #define HALL_SENSOR_IRQ		IRQ_EINT3
 

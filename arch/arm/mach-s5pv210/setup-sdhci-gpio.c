@@ -15,90 +15,133 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
+#include <linux/gpio.h>
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
 
-#include <mach/gpio.h>
 #include <plat/gpio-cfg.h>
 #include <plat/regs-sdhci.h>
+#include <plat/sdhci.h>
+
+#include "herring.h"
 
 void s5pv210_setup_sdhci0_cfg_gpio(struct platform_device *dev, int width)
 {
 	unsigned int gpio;
 
-	/* Set all the necessary GPG0/GPG1 pins to special-function 2 */
-	for (gpio = S5PV210_GPG0(0); gpio < S5PV210_GPG0(2); gpio++) {
-		s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-		s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
-	}
 	switch (width) {
+	/* Channel 0 supports 4 and 8-bit bus width */
 	case 8:
-		/* GPG1[3:6] special-funtion 3 */
+		/* Set all the necessary GPIO function and pull up/down */
 		for (gpio = S5PV210_GPG1(3); gpio <= S5PV210_GPG1(6); gpio++) {
 			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(3));
 			s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
+			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
 		}
+
+	case 0:
+	case 1:
 	case 4:
-		/* GPG0[3:6] special-funtion 2 */
-		for (gpio = S5PV210_GPG0(3); gpio <= S5PV210_GPG0(6); gpio++) {
-			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-			s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
+		/* Set all the necessary GPIO function and pull up/down */
+		for (gpio = S5PV210_GPG0(0); gpio <= S5PV210_GPG0(6); gpio++) {
+			if (gpio != S5PV210_GPG0(2)) {
+				s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
+				s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
+			}
+			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
 		}
-	default:
 		break;
+	default:
+		printk(KERN_ERR "Wrong SD/MMC bus width : %d\n", width);
 	}
 
-	s3c_gpio_setpull(S5PV210_GPG0(2), S3C_GPIO_PULL_UP);
-	s3c_gpio_cfgpin(S5PV210_GPG0(2), S3C_GPIO_SFN(2));
+	if (machine_is_herring()) {
+		s3c_gpio_cfgpin(S5PV210_GPJ2(7), S3C_GPIO_OUTPUT);
+		s3c_gpio_setpull(S5PV210_GPJ2(7), S3C_GPIO_PULL_NONE);
+		gpio_set_value(S5PV210_GPJ2(7), 1);
+	}
+
+	if (machine_is_herring()) {
+		gpio_direction_output(S5PV210_GPJ2(7), 1);
+		s3c_gpio_setpull(S5PV210_GPJ2(7), S3C_GPIO_PULL_NONE);
+	}
 }
 
 void s5pv210_setup_sdhci1_cfg_gpio(struct platform_device *dev, int width)
 {
 	unsigned int gpio;
 
-	/* Set all the necessary GPG1[0:1] pins to special-function 2 */
-	for (gpio = S5PV210_GPG1(0); gpio < S5PV210_GPG1(2); gpio++) {
-		s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-		s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
+	switch (width) {
+	/* Channel 1 supports 4-bit bus width */
+	case 0:
+	case 1:
+	case 4:
+		/* Set all the necessary GPIO function and pull up/down */
+		for (gpio = S5PV210_GPG1(0); gpio <= S5PV210_GPG1(6); gpio++) {
+			if (gpio != S5PV210_GPG1(2)) {
+				s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
+				s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
+			}
+			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
+		}
+		break;
+	default:
+		printk(KERN_ERR "Wrong SD/MMC bus width : %d\n", width);
 	}
-
-	/* Data pin GPG1[3:6] to special-function 2 */
-	for (gpio = S5PV210_GPG1(3); gpio <= S5PV210_GPG1(6); gpio++) {
-		s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-		s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
-	}
-
-	s3c_gpio_setpull(S5PV210_GPG1(2), S3C_GPIO_PULL_UP);
-	s3c_gpio_cfgpin(S5PV210_GPG1(2), S3C_GPIO_SFN(2));
 }
 
 void s5pv210_setup_sdhci2_cfg_gpio(struct platform_device *dev, int width)
 {
 	unsigned int gpio;
 
-	/* Set all the necessary GPG2[0:1] pins to special-function 2 */
-	for (gpio = S5PV210_GPG2(0); gpio < S5PV210_GPG2(2); gpio++) {
-		s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-		s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
-	}
-
 	switch (width) {
+	/* Channel 2 supports 4 and 8-bit bus width */
 	case 8:
-		/* Data pin GPG3[3:6] to special-function 3 */
+		/* Set all the necessary GPIO function and pull up/down */
 		for (gpio = S5PV210_GPG3(3); gpio <= S5PV210_GPG3(6); gpio++) {
 			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(3));
 			s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
+			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
 		}
-	case 4:
-		/* Data pin GPG2[3:6] to special-function 2 */
-		for (gpio = S5PV210_GPG2(3); gpio <= S5PV210_GPG2(6); gpio++) {
-			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-			s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
-		}
-	default:
-		break;
-	}
 
-	s3c_gpio_setpull(S5PV210_GPG2(2), S3C_GPIO_PULL_UP);
-	s3c_gpio_cfgpin(S5PV210_GPG2(2), S3C_GPIO_SFN(2));
+	case 0:
+	case 1:
+	case 4:
+		if (machine_is_herring() && herring_is_cdma_wimax_dev())
+			break;
+		/* Set all the necessary GPIO function and pull up/down */
+		for (gpio = S5PV210_GPG2(0); gpio <= S5PV210_GPG2(6); gpio++) {
+			if (gpio != S5PV210_GPG2(2)) {
+				s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
+				s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
+			}
+			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
+		}
+		break;
+	default:
+		printk(KERN_ERR "Wrong SD/MMC bus width : %d\n", width);
+	}
+}
+
+void s5pv210_setup_sdhci3_cfg_gpio(struct platform_device *dev, int width)
+{
+	unsigned int gpio;
+
+	switch (width) {
+	/* Channel 3 supports 4-bit bus width */
+	case 0:
+	case 1:
+	case 4:
+		/* Set all the necessary GPIO function and pull up/down */
+		for (gpio = S5PV210_GPG3(0); gpio <= S5PV210_GPG3(6); gpio++) {
+			if (gpio != S5PV210_GPG3(2)) {
+				s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
+				s3c_gpio_setpull(gpio, S3C_GPIO_PULL_UP);
+			}
+			s3c_gpio_set_drvstrength(gpio, S3C_GPIO_DRVSTR_2X);
+		}
+		break;
+	default:
+		printk(KERN_ERR "Wrong SD/MMC bus width : %d\n", width);
+	}
 }

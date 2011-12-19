@@ -11,6 +11,11 @@
 
 #define AD193X_PLL_CLK_CTRL0    0x800
 #define AD193X_PLL_POWERDOWN           0x01
+#define AD193X_PLL_INPUT_MASK   (~0x6)
+#define AD193X_PLL_INPUT_256    (0 << 1)
+#define AD193X_PLL_INPUT_384    (1 << 1)
+#define AD193X_PLL_INPUT_512    (2 << 1)
+#define AD193X_PLL_INPUT_768    (3 << 1)
 #define AD193X_PLL_CLK_CTRL1    0x801
 #define AD193X_DAC_CTRL0        0x802
 #define AD193X_DAC_POWERDOWN           0x01
@@ -29,7 +34,8 @@
 #define AD193X_DAC_LEFT_HIGH    (1 << 3)
 #define AD193X_DAC_BCLK_INV     (1 << 7)
 #define AD193X_DAC_CTRL2        0x804
-#define AD193X_DAC_WORD_LEN_MASK	0xC
+#define AD193X_DAC_WORD_LEN_SHFT        3
+#define AD193X_DAC_WORD_LEN_MASK        0x18
 #define AD193X_DAC_MASTER_MUTE  1
 #define AD193X_DAC_CHNL_MUTE    0x805
 #define AD193X_DACL1_MUTE       0
@@ -58,7 +64,7 @@
 #define AD193X_ADC_CTRL1        0x80f
 #define AD193X_ADC_SERFMT_MASK		0x60
 #define AD193X_ADC_SERFMT_STEREO	(0 << 5)
-#define AD193X_ADC_SERFMT_TDM		(1 << 2)
+#define AD193X_ADC_SERFMT_TDM		(1 << 5)
 #define AD193X_ADC_SERFMT_AUX		(2 << 5)
 #define AD193X_ADC_WORD_LEN_MASK	0x3
 #define AD193X_ADC_CTRL2        0x810
@@ -74,8 +80,5 @@
 #define AD193X_ADC_BCLK_INV     (1 << 1)
 
 #define AD193X_NUM_REGS          17
-
-extern struct snd_soc_dai ad193x_dai;
-extern struct snd_soc_codec_device soc_codec_dev_ad193x;
 
 #endif

@@ -72,6 +72,12 @@ extern struct sys_timer s5p_systimer;
 extern struct sys_timer s3c24xx_timer;
 #endif
 
+extern struct syscore_ops s3c2410_pm_syscore_ops;
+extern struct syscore_ops s3c2412_pm_syscore_ops;
+extern struct syscore_ops s3c2416_pm_syscore_ops;
+extern struct syscore_ops s3c244x_pm_syscore_ops;
+extern struct syscore_ops s3c64xx_irq_syscore_ops;
+
 /* system device classes */
 
 extern struct sysdev_class s3c2410_sysclass;
@@ -83,9 +89,9 @@ extern struct sysdev_class s3c2442_sysclass;
 extern struct sysdev_class s3c2443_sysclass;
 extern struct sysdev_class s3c6410_sysclass;
 extern struct sysdev_class s3c64xx_sysclass;
-extern struct sysdev_class s5p6440_sysclass;
-extern struct sysdev_class s5p6442_sysclass;
+extern struct sysdev_class s5p64x0_sysclass;
 extern struct sysdev_class s5pv210_sysclass;
+extern struct sysdev_class exynos4_sysclass;
 
 extern void (*s5pc1xx_idle)(void);
 

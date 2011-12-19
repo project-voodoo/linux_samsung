@@ -15,7 +15,11 @@
  * management
 */
 
-#if defined(CONFIG_PM)
+#include <linux/irq.h>
+
+struct sys_device;
+
+#ifdef CONFIG_PM
 
 extern __init int s3c_pm_init(void);
 
@@ -49,12 +53,10 @@ extern unsigned char pm_uart_udivslot;  /* true to save UART UDIVSLOT */
 
 /* from sleep.S */
 
-extern int  s3c_cpu_save(unsigned long *saveblk);
+extern int  s3c_cpu_save(unsigned long *saveblk, long);
 extern void s3c_cpu_resume(void);
 
 extern void s3c2410_cpu_suspend(void);
-
-extern unsigned long s3c_sleep_save_phys;
 
 /* sleep save info */
 
@@ -101,15 +103,16 @@ extern void s3c_pm_do_restore(struct sleep_save *ptr, int count);
 extern void s3c_pm_do_restore_core(struct sleep_save *ptr, int count);
 
 #ifdef CONFIG_PM
-struct sys_device;
-extern int s3c_irqext_wake(unsigned int irqno, unsigned int state);
-extern int s3c24xx_irq_suspend(struct sys_device *dev, pm_message_t state);
-extern int s3c24xx_irq_resume(struct sys_device *dev);
+extern int s3c_irqext_wake(struct irq_data *data, unsigned int state);
+extern int s3c24xx_irq_suspend(void);
+extern void s3c24xx_irq_resume(void);
 #else
 #define s3c_irqext_wake NULL
 #define s3c24xx_irq_suspend NULL
 #define s3c24xx_irq_resume  NULL
 #endif
+
+extern struct syscore_ops s3c24xx_irq_syscore_ops;
 
 /* PM debug functions */
 
@@ -178,14 +181,6 @@ extern void s3c_pm_restore_gpios(void);
  * Save the GPIO states for resotration on resume. See s3c_pm_restore_gpios().
  */
 extern void s3c_pm_save_gpios(void);
-
-/**
- * s3c_pm_cb_flushcache - callback for assembly code
- *
- * Callback to issue flush_cache_all() as this call is
- * not a directly callable object.
- */
-extern void s3c_pm_cb_flushcache(void);
 
 extern void s3c_pm_save_core(void);
 extern void s3c_pm_restore_core(void);

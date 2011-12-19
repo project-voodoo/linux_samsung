@@ -103,7 +103,7 @@ static struct net_device_ops l2tp_eth_netdev_ops = {
 static void l2tp_eth_dev_setup(struct net_device *dev)
 {
 	ether_setup(dev);
-
+	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
 	dev->netdev_ops		= &l2tp_eth_netdev_ops;
 	dev->destructor		= free_netdev;
 }
@@ -144,7 +144,6 @@ static void l2tp_eth_dev_recv(struct l2tp_session *session, struct sk_buff *skb,
 	nf_reset(skb);
 
 	if (dev_forward_skb(dev, skb) == NET_RX_SUCCESS) {
-		dev->last_rx = jiffies;
 		dev->stats.rx_packets++;
 		dev->stats.rx_bytes += data_len;
 	} else

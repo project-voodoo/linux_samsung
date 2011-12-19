@@ -46,7 +46,7 @@
 static int msg_level = -1;
 module_param(msg_level, int, 0);
 
-static int swmxdev_ioctl(struct inode *inode, struct file *file, u32 cmd,
+static long swmxdev_ioctl(struct file *file, u32 cmd,
 							unsigned long arg)
 {
 	int	ret = 0;
@@ -98,7 +98,7 @@ static int swmxdev_open(struct inode *inode, struct file *file)
 static const struct file_operations swmx_fops = {
 	.owner = THIS_MODULE,
 	.open = swmxdev_open,
-	.ioctl = swmxdev_ioctl,
+	.unlocked_ioctl = swmxdev_ioctl,
 };
 
 /*
@@ -183,8 +183,8 @@ static int uwbrdev_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int uwbrdev_ioctl(struct inode *inode, struct file *file, u32 cmd,
-		unsigned long arg)
+static long uwbrdev_ioctl(struct file *file, u32 cmd,
+			  unsigned long arg)
 {
 	struct net_adapter		*adapter;
 	struct process_descriptor	*procdsc;
@@ -328,7 +328,7 @@ static const struct file_operations uwbr_fops = {
 	.owner = THIS_MODULE,
 	.open = uwbrdev_open,
 	.release	= uwbrdev_release,
-	.ioctl = uwbrdev_ioctl,
+	.unlocked_ioctl	= uwbrdev_ioctl,
 	.read		= uwbrdev_read,
 };
 

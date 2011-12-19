@@ -159,8 +159,7 @@ static int akm8973_wait_for_data_ready(struct akm8973_data *akm)
 	return err;
 }
 
-static int akmd_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
-		unsigned long arg)
+static long akmd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	void __user *argp = (void __user *)arg;
 	struct akm8973_data *akm = container_of(file->private_data,
@@ -235,7 +234,7 @@ static int akmd_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 static const struct file_operations akmd_fops = {
 	.owner = THIS_MODULE,
 	.open = nonseekable_open,
-	.ioctl = akmd_ioctl,
+	.unlocked_ioctl = akmd_ioctl,
 };
 
 static int akm8973_setup_irq(struct akm8973_data *akm)
