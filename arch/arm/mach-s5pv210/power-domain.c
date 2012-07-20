@@ -38,6 +38,7 @@ struct clk_should_be_running {
 	const char *clk_name;
 	struct device *dev;
 };
+static spinlock_t pd_lock;
 
 static struct regulator_consumer_supply s5pv210_pd_audio_supply[] = {
 	REGULATOR_SUPPLY("pd", "samsung-i2s.0"),
@@ -332,18 +333,25 @@ static int s5pv210_pd_pwr_off(int ctrl)
 
 static int s5pv210_pd_ctrl(int ctrlbit, int enable)
 {
-	u32 pd_reg = __raw_readl(S5P_NORMAL_CFG);
+	u32 pd_reg;
 
+	spin_lock(&pd_lock);
+	pd_reg = __raw_readl(S5P_NORMAL_CFG);
 	if (enable) {
 		__raw_writel((pd_reg | ctrlbit), S5P_NORMAL_CFG);
 		if (s5pv210_pd_pwr_done(ctrlbit))
-			return -ETIME;
+			goto out;
 	} else {
 		__raw_writel((pd_reg & ~(ctrlbit)), S5P_NORMAL_CFG);
 		if (s5pv210_pd_pwr_off(ctrlbit))
-			return -ETIME;
+			goto out;
 	}
+	spin_unlock(&pd_lock);
 	return 0;
+out:
+	spin_unlock(&pd_lock);
+	return -ETIME;
+
 }
 
 static int s5pv210_pd_clk_enable(struct clk_should_be_running *clk_run)
@@ -402,7 +410,7 @@ static int s5pv210_pd_is_enabled(struct regulator_dev *dev)
 static int s5pv210_pd_enable(struct regulator_dev *dev)
 {
 	struct s5pv210_pd_data *data = rdev_get_drvdata(dev);
-	int ret;
+	int ret = 0;
 
 	if (data->clk_run)
 		s5pv210_pd_clk_enable(data->clk_run);
@@ -410,13 +418,12 @@ static int s5pv210_pd_enable(struct regulator_dev *dev)
 	ret = s5pv210_pd_ctrl(data->ctrlbit, 1);
 	if (ret < 0) {
 		printk(KERN_ERR "failed to enable power domain\n");
-		return ret;
 	}
 
 	if (data->clk_run)
 		s5pv210_pd_clk_disable(data->clk_run);
 
-	return 0;
+	return ret;
 }
 
 static int s5pv210_pd_disable(struct regulator_dev *dev)
@@ -497,6 +504,7 @@ static int __devinit reg_s5pv210_pd_probe(struct platform_device *pdev)
 
 	drvdata->clk_run = config->clk_run;
 	drvdata->ctrlbit = config->ctrlbit;
+	spin_lock_init(&pd_lock);
 
 	drvdata->dev = regulator_register(&drvdata->desc, &pdev->dev,
 					  config->init_data, drvdata);

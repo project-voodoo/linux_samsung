@@ -1384,8 +1384,7 @@ static void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		if ((ios->timing == MMC_TIMING_UHS_SDR50) ||
 		    (ios->timing == MMC_TIMING_UHS_SDR104) ||
 		    (ios->timing == MMC_TIMING_UHS_DDR50) ||
-		    (ios->timing == MMC_TIMING_UHS_SDR25) ||
-		    (ios->timing == MMC_TIMING_UHS_SDR12))
+		    (ios->timing == MMC_TIMING_UHS_SDR25))
 			ctrl |= SDHCI_CTRL_HISPD;
 
 		ctrl_2 = sdhci_readw(host, SDHCI_HOST_CONTROL2);
@@ -2317,20 +2316,21 @@ out:
 int sdhci_suspend_host(struct sdhci_host *host, pm_message_t state)
 {
 	int ret = 0;
-	struct mmc_host *mmc = host->mmc;
 
 	sdhci_disable_card_detection(host);
 
 	/* Disable tuning since we are suspending */
 	if (host->version >= SDHCI_SPEC_300 && host->tuning_count &&
 	    host->tuning_mode == SDHCI_TUNING_MODE_1) {
+		del_timer_sync(&host->tuning_timer);
 		host->flags &= ~SDHCI_NEEDS_RETUNING;
-		mod_timer(&host->tuning_timer, jiffies +
-			host->tuning_count * HZ);
 	}
 
-	if (mmc->card && (mmc->card->type != MMC_TYPE_SDIO))
-		ret = mmc_suspend_host(host->mmc);
+	ret = mmc_suspend_host(host->mmc);
+	if (ret) {
+		sdhci_enable_card_detection(host);
+		return ret;
+	}
 
 	sdhci_mask_irqs(host, SDHCI_INT_ALL_MASK);
 
@@ -2350,7 +2350,6 @@ EXPORT_SYMBOL_GPL(sdhci_suspend_host);
 int sdhci_resume_host(struct sdhci_host *host)
 {
 	int ret = 0;
-	struct mmc_host *mmc = host->mmc;
 
 	if (host->vmmc) {
 		int ret = regulator_enable(host->vmmc);
@@ -2370,8 +2369,7 @@ int sdhci_resume_host(struct sdhci_host *host)
 	sdhci_init(host, (host->mmc->pm_flags & MMC_PM_KEEP_POWER));
 	mmiowb();
 
-	if (mmc->card && (mmc->card->type != MMC_TYPE_SDIO))
-		ret = mmc_resume_host(host->mmc);
+	ret = mmc_resume_host(host->mmc);
 
 	sdhci_enable_card_detection(host);
 
